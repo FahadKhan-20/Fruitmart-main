@@ -68,6 +68,8 @@ export async function POST(req: Request) {
       razorpay_order_id: body.razorpay_order_id || null,
       razorpay_payment_id: body.razorpay_payment_id || null,
       razorpay_signature: body.razorpay_signature || null,
+      upi_utr_number: body.upi_utr_number || body.upiUtrNumber || null,
+      payment_verified_via: body.payment_verified_via || body.paymentVerifiedVia || null,
       status: 'received',
       delivery_notes: body.delivery_notes || body.deliveryNotes || '',
       created_at: new Date().toISOString(),

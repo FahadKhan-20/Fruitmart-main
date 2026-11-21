@@ -64,12 +64,27 @@ db.exec(`
     branch_distance_km REAL,
     status TEXT NOT NULL DEFAULT 'received',
     delivery_notes TEXT,
+    upi_utr_number TEXT,
+    payment_verified_via TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS qr_payments (
+    id TEXT PRIMARY KEY,
+    order_id TEXT NOT NULL,
+    amount REAL NOT NULL,
+    upi_id TEXT NOT NULL,
+    customer_phone TEXT,
+    utr_number TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    verified_via TEXT,
+    created_at TEXT NOT NULL,
+    verified_at TEXT
+  );
 `);
 
-// Ensure migration for Razorpay columns if table already existed
+// Ensure migration for Razorpay & UPI columns if table already existed
 try {
   db.exec(`
     ALTER TABLE orders ADD COLUMN razorpay_order_id TEXT;
@@ -98,6 +113,16 @@ try {
 try {
   db.exec(`
     ALTER TABLE orders ADD COLUMN branch_distance_km REAL;
+  `);
+} catch (e) {}
+try {
+  db.exec(`
+    ALTER TABLE orders ADD COLUMN upi_utr_number TEXT;
+  `);
+} catch (e) {}
+try {
+  db.exec(`
+    ALTER TABLE orders ADD COLUMN payment_verified_via TEXT;
   `);
 } catch (e) {}
 
@@ -380,6 +405,11 @@ const server = http.createServer(async (req, res) => {
               sql += ' AND assigned_branch_id = ?';
               params.push(val.slice(3));
             }
+          } else if (key === 'upi_utr_number') {
+            if (val.startsWith('eq.')) {
+              sql += ' AND upi_utr_number = ?';
+              params.push(val.slice(3));
+            }
           }
         }
 
@@ -421,6 +451,8 @@ const server = http.createServer(async (req, res) => {
         const assigned_branch_id = item.assigned_branch_id || null;
         const assigned_branch_name = item.assigned_branch_name || null;
         const branch_distance_km = item.branch_distance_km != null ? Number(item.branch_distance_km) : null;
+        const upi_utr_number = item.upi_utr_number || null;
+        const payment_verified_via = item.payment_verified_via || null;
         const status = item.status || 'received';
         const delivery_notes = item.delivery_notes || '';
         const created_at = item.created_at || new Date().toISOString();
@@ -432,8 +464,8 @@ const server = http.createServer(async (req, res) => {
             items, subtotal, delivery_fee, handling_fee, total_amount, payment_method,
             payment_status, stripe_payment_id, razorpay_order_id, razorpay_payment_id,
             razorpay_signature, assigned_branch_id, assigned_branch_name, branch_distance_km,
-            status, delivery_notes, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            upi_utr_number, payment_verified_via, status, delivery_notes, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
         insertStmt.run(
@@ -441,7 +473,7 @@ const server = http.createServer(async (req, res) => {
           items, subtotal, delivery_fee, handling_fee, total_amount, payment_method,
           payment_status, stripe_payment_id, razorpay_order_id, razorpay_payment_id,
           razorpay_signature, assigned_branch_id, assigned_branch_name, branch_distance_km,
-          status, delivery_notes, created_at, updated_at
+          upi_utr_number, payment_verified_via, status, delivery_notes, created_at, updated_at
         );
 
         const newOrder = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
@@ -490,6 +522,14 @@ const server = http.createServer(async (req, res) => {
           updates.push('branch_distance_km = ?');
           params.push(Number(body.branch_distance_km));
         }
+        if (body.upi_utr_number) {
+          updates.push('upi_utr_number = ?');
+          params.push(body.upi_utr_number);
+        }
+        if (body.payment_verified_via) {
+          updates.push('payment_verified_via = ?');
+          params.push(body.payment_verified_via);
+        }
 
         params.push(id);
         db.prepare(`UPDATE orders SET ${updates.join(', ')} WHERE id = ?`).run(...params);
@@ -518,6 +558,139 @@ const server = http.createServer(async (req, res) => {
       }
     } catch (err) {
       console.error('Database error in /rest/v1/orders:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+      return;
+    }
+  }
+
+  // 1c. PostgREST /rest/v1/qr_payments endpoint (Automated UPI QR Payment Ledger)
+  if (pathname === '/rest/v1/qr_payments') {
+    try {
+      // GET qr_payments
+      if (req.method === 'GET') {
+        let sql = 'SELECT * FROM qr_payments WHERE 1=1';
+        const params = [];
+        for (const [key, val] of searchParams.entries()) {
+          if (key === 'select' || key === 'order') continue;
+          if (key === 'id' && val.startsWith('eq.')) {
+            sql += ' AND id = ?';
+            params.push(val.slice(3));
+          } else if (key === 'order_id' && val.startsWith('eq.')) {
+            sql += ' AND order_id = ?';
+            params.push(val.slice(3));
+          } else if (key === 'status' && val.startsWith('eq.')) {
+            sql += ' AND status = ?';
+            params.push(val.slice(3));
+          }
+        }
+        sql += ' ORDER BY created_at DESC';
+        const rows = db.prepare(sql).all(...params);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(rows));
+        return;
+      }
+
+      // POST create qr_payment
+      if (req.method === 'POST') {
+        const body = await parseBody(req);
+        const item = Array.isArray(body) ? body[0] : body;
+        const id = item.id || `PAY-${Date.now().toString(36).toUpperCase()}`;
+        const order_id = item.order_id || '';
+        const amount = Number(item.amount || 0);
+        const upi_id = item.upi_id || 'mdfresh@upi';
+        const customer_phone = item.customer_phone || '';
+        const utr_number = item.utr_number || null;
+        const status = item.status || 'pending';
+        const verified_via = item.verified_via || null;
+        const created_at = item.created_at || new Date().toISOString();
+        const verified_at = item.verified_at || null;
+
+        const insertStmt = db.prepare(`
+          INSERT INTO qr_payments (
+            id, order_id, amount, upi_id, customer_phone, utr_number, status, verified_via, created_at, verified_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        insertStmt.run(id, order_id, amount, upi_id, customer_phone, utr_number, status, verified_via, created_at, verified_at);
+
+        const newPayment = db.prepare('SELECT * FROM qr_payments WHERE id = ?').get(id);
+        console.log(`[QR Payment Created] ID: ${id}, Order: ${order_id}, Amount: ₹${amount}`);
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify([newPayment]));
+        return;
+      }
+
+      // PATCH update qr_payment (verify)
+      if (req.method === 'PATCH') {
+        const body = await parseBody(req);
+        let id = null;
+        let order_id = null;
+        for (const [key, val] of searchParams.entries()) {
+          if (key === 'id' && val.startsWith('eq.')) id = val.slice(3);
+          if (key === 'order_id' && val.startsWith('eq.')) order_id = val.slice(3);
+        }
+
+        const targetField = id ? 'id' : order_id ? 'order_id' : null;
+        const targetValue = id || order_id;
+
+        if (!targetField) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Missing id or order_id for PATCH' }));
+          return;
+        }
+
+        const existing = db.prepare(`SELECT * FROM qr_payments WHERE ${targetField} = ?`).get(targetValue);
+        if (!existing) {
+          const id = body.id || `PAY-${Date.now().toString(36).toUpperCase()}`;
+          const order_id = body.order_id || targetValue;
+          const amount = Number(body.amount || 0);
+          const upi_id = body.upi_id || 'mdfresh@upi';
+          const customer_phone = body.customer_phone || '';
+          const utr_number = body.utr_number || null;
+          const status = body.status || 'pending';
+          const verified_via = body.verified_via || null;
+          const created_at = body.created_at || new Date().toISOString();
+          const verified_at = body.verified_at || (status === 'verified' ? new Date().toISOString() : null);
+
+          db.prepare(`
+            INSERT INTO qr_payments (id, order_id, amount, upi_id, customer_phone, utr_number, status, verified_via, created_at, verified_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(id, order_id, amount, upi_id, customer_phone, utr_number, status, verified_via, created_at, verified_at);
+          const inserted = db.prepare('SELECT * FROM qr_payments WHERE id = ?').get(id);
+          console.log(`[QR Payment Inserted via PATCH] Target: ${targetValue}, Status: ${status}`);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify([inserted]));
+          return;
+        }
+
+        const updates = [];
+        const params = [];
+        if (body.status) {
+          updates.push('status = ?');
+          params.push(body.status);
+        }
+        if (body.utr_number) {
+          updates.push('utr_number = ?');
+          params.push(body.utr_number);
+        }
+        if (body.verified_via) {
+          updates.push('verified_via = ?');
+          params.push(body.verified_via);
+        }
+        updates.push('verified_at = ?');
+        params.push(body.verified_at || new Date().toISOString());
+
+        params.push(targetValue);
+        db.prepare(`UPDATE qr_payments SET ${updates.join(', ')} WHERE ${targetField} = ?`).run(...params);
+
+        const updated = db.prepare(`SELECT * FROM qr_payments WHERE ${targetField} = ?`).get(targetValue);
+        console.log(`[QR Payment Verified/Updated] Target: ${targetValue}, Status: ${body.status}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify([updated]));
+        return;
+      }
+    } catch (err) {
+      console.error('Database error in /rest/v1/qr_payments:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
       return;

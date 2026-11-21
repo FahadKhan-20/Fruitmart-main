@@ -66,6 +66,10 @@ export default function Admin() {
   const [selectedBranchFilter, setSelectedBranchFilter] = useState('all');
   const [updatingOrderId, setUpdatingOrderId] = useState(null);
 
+  // ===================== QR PAYMENTS & SOUNDBOX STATE =====================
+  const [qrPayments, setQrPayments] = useState([]);
+  const [confirmingPaymentId, setConfirmingPaymentId] = useState(null);
+
   // ===================== INVENTORY STATE =====================
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
@@ -158,16 +162,50 @@ export default function Admin() {
     }
   };
 
-  // Initial load & Polling for orders
+  // Fetch QR Payments Ledger
+  const fetchQrPayments = async () => {
+    try {
+      const res = await fetch('/api/payments/qr-ledger');
+      if (res.ok) {
+        const data = await res.json();
+        setQrPayments(data || []);
+      }
+    } catch (e) {
+      console.warn('QR ledger fetch note:', e);
+    }
+  };
+
+  const handleConfirmPayment = async (orderId, paymentId) => {
+    try {
+      setConfirmingPaymentId(orderId || paymentId);
+      const res = await fetch('/api/payments/qr-ledger', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId, paymentId })
+      });
+      if (res.ok) {
+        await fetchQrPayments();
+        await fetchOrders();
+      }
+    } catch (e) {
+      console.error('Error confirming payment:', e);
+    } finally {
+      setConfirmingPaymentId(null);
+    }
+  };
+
+  // Initial load & Polling for orders and QR payments
   useEffect(() => {
     fetchOrders();
     fetchProducts();
     fetchGatewayData();
+    fetchQrPayments();
 
-    // Auto-refresh orders every 4 seconds for instant delivery dispatch
+    // Auto-refresh orders and QR payments every 3.5 seconds
     const interval = setInterval(() => {
       fetchOrders();
-    }, 4000);
+      fetchQrPayments();
+    }, 3500);
 
     return () => {
       clearInterval(interval);
@@ -551,6 +589,76 @@ export default function Admin() {
               </div>
             </div>
           </div>
+
+          {/* Live Store Soundbox & Incoming UPI QR Payments Monitor */}
+          {qrPayments.length > 0 && (
+            <div className="bg-gradient-to-r from-emerald-50 via-teal-50 to-blue-50 p-4 rounded-3xl border border-emerald-200 shadow-sm space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+                    <span className="text-sm">🔊</span>
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-black text-gray-900 flex items-center gap-1.5">
+                      <span>MD FRESH Store Soundbox & Live UPI Monitor</span>
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                    </h3>
+                    <p className="text-[10px] text-gray-500">Live incoming bank credits from customer QR code scans</p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-black uppercase text-emerald-800 bg-white px-2.5 py-1 rounded-lg border border-emerald-200">
+                  {qrPayments.filter(p => p.status === 'pending').length} Pending • {qrPayments.filter(p => p.status === 'verified').length} Verified
+                </span>
+              </div>
+
+              <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-2.5 pt-1">
+                {qrPayments.slice(0, 6).map((pay) => (
+                  <div
+                    key={pay.id}
+                    className={`p-3 rounded-2xl border text-xs flex flex-col justify-between transition ${
+                      pay.status === 'verified'
+                        ? 'bg-white/90 border-emerald-200'
+                        : 'bg-white border-amber-300 ring-2 ring-amber-400/20 shadow-xs'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <span className="font-mono font-bold text-gray-900 block">{pay.order_id || pay.id}</span>
+                        <span className="text-[10px] text-gray-400">{pay.customer_phone || 'Customer'}</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="font-black text-sm text-gray-900 block">₹{pay.amount}</span>
+                        <span className={`text-[10px] font-black uppercase ${pay.status === 'verified' ? 'text-emerald-700' : 'text-amber-700 animate-pulse'}`}>
+                          {pay.status === 'verified' ? '✓ Paid' : 'Awaiting'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between">
+                      {pay.utr_number ? (
+                        <span className="text-[10px] font-mono font-semibold text-gray-500 truncate">
+                          UTR: {pay.utr_number}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-amber-700 font-bold">Scanning QR...</span>
+                      )}
+
+                      {pay.status === 'pending' && (
+                        <button
+                          type="button"
+                          disabled={confirmingPaymentId === pay.order_id}
+                          onClick={() => handleConfirmPayment(pay.order_id, pay.id)}
+                          className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-black cursor-pointer transition active:scale-95 disabled:opacity-50"
+                        >
+                          {confirmingPaymentId === pay.order_id ? 'Confirming...' : 'Acknowledge Paid'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Filter Bar */}
           <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-wrap items-center justify-between gap-3">
