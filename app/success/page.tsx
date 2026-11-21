@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
+import Navbar from '@/components/Navbar';
 
 interface OrderData {
   id: string;
@@ -161,13 +162,15 @@ function SuccessContent() {
   const stage = getStage(order?.status);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50/60 via-emerald-50/40 to-teal-50/60 py-8 px-4 flex flex-col items-center justify-center">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-        className="bg-white rounded-3xl shadow-xl border border-gray-100 max-w-lg w-full overflow-hidden"
-      >
+    <div className="min-h-screen bg-gradient-to-br from-green-50 via-orange-50 to-amber-50/50 flex flex-col font-sans">
+      <Navbar />
+      <div className="flex-1 py-8 px-4 flex flex-col items-center justify-center">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95, y: 20 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ duration: 0.4 }}
+          className="bg-white rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-gray-100 max-w-lg w-full overflow-hidden"
+        >
         {/* Top Status Header */}
         <div className={`p-6 text-white relative overflow-hidden transition-all duration-500 ${
           stage === 5 
@@ -502,6 +505,7 @@ function SuccessContent() {
           </div>
         </div>
       </motion.div>
+      </div>
     </div>
   );
 }
