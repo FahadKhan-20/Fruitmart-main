@@ -10,7 +10,9 @@ import {
   ChevronDown, 
   Zap, 
   ShieldCheck, 
-  X
+  X,
+  Bike,
+  Store
 } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
@@ -134,6 +136,26 @@ export default function Navbar() {
 
           {/* Actions (Right) */}
           <div className="flex items-center gap-2 md:gap-3 shrink-0">
+            {/* Delivery Partner Quick Link */}
+            <Link
+              href="/rider"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-2 text-xs font-black text-amber-900 bg-amber-50 hover:bg-amber-100 rounded-xl border border-amber-200 transition shadow-xs"
+              title="Delivery Partner Portal"
+            >
+              <Bike className="w-4 h-4 text-amber-600" />
+              <span>Rider Portal</span>
+            </Link>
+
+            {/* Store Manager Quick Link */}
+            <Link
+              href="/admin"
+              className="hidden lg:flex items-center gap-1.5 px-3 py-2 text-xs font-black text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-xl border border-gray-200 transition"
+              title="Store Orders & Dispatch Admin"
+            >
+              <Store className="w-3.5 h-3.5 text-gray-600" />
+              <span>Store Hub</span>
+            </Link>
+
             {/* Login / Profile */}
             {mounted && isAuthenticated ? (
               <button 
@@ -208,6 +230,24 @@ export default function Navbar() {
               Go
             </button>
           </form>
+
+          {/* Mobile Quick Links: Rider & Store Manager */}
+          <div className="flex items-center gap-2 pt-0.5">
+            <Link
+              href="/rider"
+              className="flex-1 py-1.5 px-3 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-xl text-center text-[11px] font-black flex items-center justify-center gap-1.5"
+            >
+              <Bike className="w-3.5 h-3.5 text-amber-600" />
+              <span>Rider Portal</span>
+            </Link>
+            <Link
+              href="/admin"
+              className="flex-1 py-1.5 px-3 bg-gray-50 hover:bg-gray-100 text-gray-800 border border-gray-200 rounded-xl text-center text-[11px] font-black flex items-center justify-center gap-1.5"
+            >
+              <Store className="w-3.5 h-3.5 text-gray-600" />
+              <span>Store Hub</span>
+            </Link>
+          </div>
         </div>
       </div>
     </header>

@@ -42,9 +42,15 @@ export async function PATCH(
 
     if (body.status) updateData.status = body.status;
     if (body.payment_status) updateData.payment_status = body.payment_status;
+    if (body.payment_method) updateData.payment_method = body.payment_method;
     if (body.assigned_branch_id) updateData.assigned_branch_id = body.assigned_branch_id;
     if (body.assigned_branch_name) updateData.assigned_branch_name = body.assigned_branch_name;
     if (body.branch_distance_km !== undefined) updateData.branch_distance_km = body.branch_distance_km;
+    if (body.rider_name) updateData.rider_name = body.rider_name;
+    if (body.rider_phone) updateData.rider_phone = body.rider_phone;
+    if (body.arrival_time) updateData.arrival_time = body.arrival_time;
+    if (body.payment_collected_by) updateData.payment_collected_by = body.payment_collected_by;
+    if (body.upi_utr_number) updateData.upi_utr_number = body.upi_utr_number;
 
     const { data, error } = await supabase
       .from('orders')

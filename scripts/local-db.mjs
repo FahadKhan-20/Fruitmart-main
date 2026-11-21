@@ -125,6 +125,26 @@ try {
     ALTER TABLE orders ADD COLUMN payment_verified_via TEXT;
   `);
 } catch (e) {}
+try {
+  db.exec(`
+    ALTER TABLE orders ADD COLUMN rider_name TEXT;
+  `);
+} catch (e) {}
+try {
+  db.exec(`
+    ALTER TABLE orders ADD COLUMN rider_phone TEXT;
+  `);
+} catch (e) {}
+try {
+  db.exec(`
+    ALTER TABLE orders ADD COLUMN arrival_time TEXT;
+  `);
+} catch (e) {}
+try {
+  db.exec(`
+    ALTER TABLE orders ADD COLUMN payment_collected_by TEXT;
+  `);
+} catch (e) {}
 
 // Seed initial products if table is empty
 const countResult = db.prepare('SELECT COUNT(*) as count FROM products').get();
@@ -529,6 +549,26 @@ const server = http.createServer(async (req, res) => {
         if (body.payment_verified_via) {
           updates.push('payment_verified_via = ?');
           params.push(body.payment_verified_via);
+        }
+        if (body.payment_method) {
+          updates.push('payment_method = ?');
+          params.push(body.payment_method);
+        }
+        if (body.rider_name) {
+          updates.push('rider_name = ?');
+          params.push(body.rider_name);
+        }
+        if (body.rider_phone) {
+          updates.push('rider_phone = ?');
+          params.push(body.rider_phone);
+        }
+        if (body.arrival_time) {
+          updates.push('arrival_time = ?');
+          params.push(body.arrival_time);
+        }
+        if (body.payment_collected_by) {
+          updates.push('payment_collected_by = ?');
+          params.push(body.payment_collected_by);
         }
 
         params.push(id);
