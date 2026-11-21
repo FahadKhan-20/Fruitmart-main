@@ -74,7 +74,7 @@ export default function RiderPortalPage() {
     name: 'Rajesh Kumar',
     phone: '+91 98765 00001',
     vehicleNo: 'KA 03 MD 4521',
-    hub: 'Indiranagar Central Hub'
+    hub: 'Annasandrapalya Branch Hub'
   };
 
   // Fetch orders from database
@@ -319,7 +319,7 @@ export default function RiderPortalPage() {
                           </span>
                         </div>
                         <p className="text-[11px] text-gray-500 mt-0.5">
-                          Hub: <strong className="text-gray-700">{ord.assigned_branch_name || 'Indiranagar Hub'}</strong>
+                          Hub: <strong className="text-gray-700">{ord.assigned_branch_name || 'Annasandrapalya Branch'}</strong>
                           {ord.branch_distance_km != null && ` • ${ord.branch_distance_km} km`}
                         </p>
                       </div>

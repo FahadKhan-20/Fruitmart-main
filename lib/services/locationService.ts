@@ -173,15 +173,15 @@ export const fetchIpLocation = async (): Promise<LocationDetails> => {
     }
   } catch (e) {}
 
-  // Standard Bengaluru Central Default Fallback
+  // Standard MD FRESH Annasandrapalya Central Default Fallback
   return {
-    shortName: 'Koramangala, Bengaluru',
-    fullAddress: 'Koramangala 4th Block, Bengaluru, Karnataka 560034',
+    shortName: 'Annasandrapalya, Bengaluru',
+    fullAddress: 'Annasandrapalya Main Rd, HAL Post, Bengaluru, Karnataka 560017',
     city: 'Bengaluru',
     state: 'Karnataka',
-    pincode: '560034',
-    latitude: 12.9352,
-    longitude: 77.6245,
+    pincode: '560017',
+    latitude: 12.9592,
+    longitude: 77.6548,
   };
 };
 

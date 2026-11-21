@@ -450,7 +450,7 @@ function SuccessContent() {
                 )}
               </div>
               <div className="text-xs font-bold text-gray-900 mt-1 leading-snug">
-                {order?.delivery_address || 'Koramangala 4th Block, Bengaluru, Karnataka 560034'}
+                {order?.delivery_address || 'Annasandrapalya Main Rd, HAL Post, Bengaluru, Karnataka 560017'}
               </div>
               <div className="text-[11px] text-gray-500 mt-1">
                 Recipient: <strong className="text-gray-700">{order?.customer_name || 'Customer'}</strong> • {order?.customer_phone || ''}

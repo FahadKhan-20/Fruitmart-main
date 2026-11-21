@@ -803,7 +803,7 @@ export default function Admin() {
                           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md text-[11px] font-bold">
                               <Store className="w-3 h-3 text-emerald-600" />
-                              <span>Hub: <strong>{ord.assigned_branch_name || 'Indiranagar Hub'}</strong></span>
+                              <span>Hub: <strong>{ord.assigned_branch_name || 'Annasandrapalya Branch'}</strong></span>
                               {ord.branch_distance_km != null && (
                                 <span className="bg-white px-1.5 py-0.2 rounded text-[10px] font-black border border-emerald-200 ml-1">
                                   {ord.branch_distance_km} km
