@@ -21,7 +21,10 @@ import {
   Store,
   DollarSign,
   ShieldCheck,
-  Volume2
+  Volume2,
+  Sparkles,
+  User,
+  Package
 } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -65,7 +68,6 @@ export default function RiderPortalPage() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'active' | 'completed'>('active');
   const [selectedOrderForQr, setSelectedOrderForQr] = useState<Order | null>(null);
-  const [cashCalcInput, setCashCalcInput] = useState<{ [orderId: string]: string }>({});
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
 
@@ -116,17 +118,27 @@ export default function RiderPortalPage() {
       if (!res.ok) throw new Error('Failed to update order status');
 
       if (updates.status === 'arrived') {
-        setActionNotice(`🔔 Customer notified: Arrival notification sent to customer for Order #${orderId}!`);
-        // Play audio alert on arrival
+        setActionNotice(`🔔 Customer notified! Arrival chime and alert sent to customer for Order #${orderId}`);
+        // Play doorbell audio alert
         try {
-          const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
-          audio.volume = 0.6;
-          audio.play().catch(() => {});
+          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+          if (AudioCtx) {
+            const ctx = new AudioCtx();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.frequency.setValueAtTime(659.25, ctx.currentTime);
+            gain.gain.setValueAtTime(0.3, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.8);
+          }
         } catch (e) {}
       } else if (updates.status === 'delivered') {
         setActionNotice(`✅ Order #${orderId} marked as successfully delivered!`);
       } else if (updates.payment_status?.includes('Paid')) {
-        setActionNotice(`💰 Payment collected successfully for Order #${orderId}!`);
+        setActionNotice(`💰 Payment confirmed for Order #${orderId}!`);
         setSelectedOrderForQr(null);
       }
 
@@ -145,120 +157,200 @@ export default function RiderPortalPage() {
   const completedOrders = orders.filter((o) => o.status === 'delivered');
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col">
+    <div className="min-h-screen bg-gradient-to-br from-green-50 via-orange-50 to-amber-50/50 flex flex-col font-sans">
       
-      {/* Top Rider Header */}
-      <header className="bg-emerald-950 text-white sticky top-0 z-40 shadow-md">
-        <div className="max-w-4xl mx-auto px-4 py-3.5 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link
-              href="/"
-              className="p-2 bg-emerald-900 hover:bg-emerald-800 text-emerald-200 rounded-xl transition"
-              title="Back to Storefront"
-            >
-              <ArrowLeft className="w-4 h-4" />
-            </Link>
-            <div className="flex items-center gap-2">
-              <div className="w-9 h-9 rounded-xl bg-emerald-500 text-gray-950 flex items-center justify-center font-black">
-                <Bike className="w-5 h-5" />
-              </div>
-              <div>
-                <h1 className="text-sm font-black tracking-tight leading-tight">
-                  MD FRESH • Delivery Partner Portal
-                </h1>
-                <p className="text-[11px] text-emerald-300 font-semibold">
-                  {riderProfile.name} • {riderProfile.vehicleNo}
-                </p>
+      {/* ====================================================================== */}
+      {/* 1. MD FRESH SIGNATURE NAVBAR (MATCHES SHOPPING HOME PAGE) */}
+      {/* ====================================================================== */}
+      <header className="sticky top-0 z-40 bg-white border-b border-gray-100 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07)]">
+        <div className="container px-4 mx-auto md:px-6">
+          <div className="flex items-center justify-between h-20 gap-3 md:gap-6">
+            
+            {/* Logo & Portal Identity (Left) */}
+            <div className="flex items-center gap-3 lg:gap-5 shrink-0">
+              <Link href="/" className="flex items-center gap-2 group">
+                <Image 
+                  src="/images/logo.png" 
+                  alt="MD FRESH Logo" 
+                  width={56} 
+                  height={56} 
+                  className="object-contain" 
+                  priority
+                />
+                <div className="text-2xl md:text-3xl font-black tracking-tight text-transparent bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text">
+                  MD FRESH
+                </div>
+              </Link>
+
+              <div className="hidden h-9 w-px bg-gray-200 md:block"></div>
+
+              {/* Rider Status Badge */}
+              <div className="hidden md:flex flex-col items-start p-1.5 rounded-2xl text-left">
+                <div className="flex items-center gap-1.5 text-xs font-black text-gray-950">
+                  <span className="flex h-2 w-2 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-600"></span>
+                  </span>
+                  <span className="uppercase tracking-wide text-green-700">Delivery Partner Portal</span>
+                </div>
+                <div className="text-xs font-semibold text-gray-600 truncate max-w-[220px]">
+                  {riderProfile.hub}
+                </div>
               </div>
             </div>
+
+            {/* Rider Info & Actions (Right) */}
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+              
+              {/* Online Pill */}
+              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-green-50 text-green-800 border border-green-200 rounded-xl text-xs font-black shadow-xs">
+                <span className="w-2 h-2 rounded-full bg-green-600 animate-pulse" />
+                <span className="hidden sm:inline">Online •</span> {riderProfile.name.split(' ')[0]}
+              </div>
+
+              {/* Live Sync Button */}
+              <button
+                onClick={fetchOrders}
+                className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl text-xs font-bold transition shadow-xs cursor-pointer active:scale-95"
+                title="Sync with Live Orders"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-gray-600" />
+                <span className="hidden sm:inline">Sync</span>
+              </button>
+
+              {/* Back to Storefront Link */}
+              <Link
+                href="/"
+                className="flex items-center gap-1.5 px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-2xl text-xs font-black shadow-sm transition active:scale-95 cursor-pointer"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Storefront</span>
+              </Link>
+            </div>
           </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={fetchOrders}
-              className="p-2 bg-emerald-900 hover:bg-emerald-800 text-emerald-200 rounded-xl transition flex items-center gap-1.5 text-xs font-bold cursor-pointer"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Sync</span>
-            </button>
-            <span className="px-2.5 py-1 bg-emerald-500 text-gray-950 rounded-lg text-xs font-black flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-gray-950 animate-pulse" />
-              Online
-            </span>
-          </div>
-        </div>
-
-        {/* Tab Navigation */}
-        <div className="max-w-4xl mx-auto px-4 flex gap-2 border-t border-emerald-900/60 pt-2 pb-2">
-          <button
-            onClick={() => setActiveTab('active')}
-            className={`px-4 py-1.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'active'
-                ? 'bg-emerald-500 text-gray-950 shadow-sm'
-                : 'text-emerald-300 hover:bg-emerald-900/50'
-            }`}
-          >
-            <span>Active Trips</span>
-            <span className="px-1.5 py-0.2 bg-emerald-900 text-white rounded text-[10px]">
-              {activeOrders.length}
-            </span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('completed')}
-            className={`px-4 py-1.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'completed'
-                ? 'bg-emerald-500 text-gray-950 shadow-sm'
-                : 'text-emerald-300 hover:bg-emerald-900/50'
-            }`}
-          >
-            <span>Completed Today</span>
-            <span className="px-1.5 py-0.2 bg-emerald-900 text-white rounded text-[10px]">
-              {completedOrders.length}
-            </span>
-          </button>
         </div>
       </header>
 
-      {/* Main Delivery Partner Content */}
-      <main className="max-w-4xl w-full mx-auto px-4 py-6 flex-1 space-y-4">
+      {/* ====================================================================== */}
+      {/* 2. HERO BANNER & STATS (MATCHES HOME PAGE GREEN HERO BANNER) */}
+      {/* ====================================================================== */}
+      <div className="container px-4 pt-6 pb-2 mx-auto md:px-6">
+        <div className="bg-gradient-to-r from-emerald-950 via-green-900 to-emerald-900 rounded-3xl p-6 sm:p-8 text-white shadow-lg border border-green-800/40 relative overflow-hidden">
+          
+          {/* Subtle background glow */}
+          <div className="absolute -top-12 -right-12 w-48 h-48 bg-green-500/20 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute -bottom-12 -left-12 w-48 h-48 bg-emerald-400/20 rounded-full blur-3xl pointer-events-none" />
+
+          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div>
+              <span className="px-3.5 py-1 bg-green-500/20 text-green-300 border border-green-500/30 rounded-full text-[10px] font-black uppercase tracking-widest inline-flex items-center gap-1.5">
+                <Bike className="w-3.5 h-3.5" />
+                <span>RIDER DISPATCH TERMINAL</span>
+              </span>
+              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black tracking-tight text-white mt-2 leading-tight">
+                Partner Delivery Operations
+              </h1>
+              <p className="text-xs sm:text-sm text-green-200/90 font-medium mt-1 max-w-xl">
+                Real-time delivery management with Google Maps navigation, customer arrival notifications, and doorstep UPI QR & cash settlement.
+              </p>
+            </div>
+
+            {/* Quick Stat Badges */}
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="bg-white/10 backdrop-blur-md border border-white/15 px-4 py-3 rounded-2xl text-center min-w-[100px]">
+                <div className="text-2xl sm:text-3xl font-black text-white">{activeOrders.length}</div>
+                <div className="text-[10px] font-black uppercase text-green-200 tracking-wider">Active Trips</div>
+              </div>
+
+              <div className="bg-white/10 backdrop-blur-md border border-white/15 px-4 py-3 rounded-2xl text-center min-w-[100px]">
+                <div className="text-2xl sm:text-3xl font-black text-emerald-300">{completedOrders.length}</div>
+                <div className="text-[10px] font-black uppercase text-green-200 tracking-wider">Delivered</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ====================================================================== */}
+      {/* 3. MAIN WORKFLOW CONTAINER */}
+      {/* ====================================================================== */}
+      <main className="container px-4 py-6 mx-auto md:px-6 flex-1 space-y-6 max-w-5xl">
         
+        {/* Real-Time Action Notification Banner */}
         {actionNotice && (
-          <div className="p-4 bg-emerald-600 text-white rounded-2xl shadow-md flex items-center justify-between text-xs font-bold animate-in fade-in slide-in-from-top duration-300">
-            <div className="flex items-center gap-2">
-              <Bell className="w-5 h-5 shrink-0" />
+          <div className="p-4 bg-green-600 text-white rounded-2xl shadow-md flex items-center justify-between text-xs font-bold animate-in fade-in slide-in-from-top duration-300">
+            <div className="flex items-center gap-2.5">
+              <Bell className="w-5 h-5 shrink-0 animate-bounce" />
               <span>{actionNotice}</span>
             </div>
             <button
               onClick={() => setActionNotice(null)}
-              className="text-white/80 hover:text-white text-sm font-black p-1 cursor-pointer"
+              className="text-white/80 hover:text-white text-base font-black p-1 cursor-pointer"
             >
               ✕
             </button>
           </div>
         )}
 
+        {/* Tab Navigation (Segmented Pill Buttons matching MD Fresh Categories) */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setActiveTab('active')}
+            className={`px-6 py-3 rounded-2xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer shadow-sm border ${
+              activeTab === 'active'
+                ? 'bg-green-600 text-white border-green-600 shadow-md scale-[1.02]'
+                : 'bg-white hover:bg-green-50/70 text-gray-700 border-gray-200'
+            }`}
+          >
+            <Bike className="w-4 h-4" />
+            <span>Active Deliveries</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+              activeTab === 'active' ? 'bg-white/25 text-white' : 'bg-gray-100 text-gray-700'
+            }`}>
+              {activeOrders.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('completed')}
+            className={`px-6 py-3 rounded-2xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer shadow-sm border ${
+              activeTab === 'completed'
+                ? 'bg-green-600 text-white border-green-600 shadow-md scale-[1.02]'
+                : 'bg-white hover:bg-green-50/70 text-gray-700 border-gray-200'
+            }`}
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            <span>Completed Today</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+              activeTab === 'completed' ? 'bg-white/25 text-white' : 'bg-gray-100 text-gray-700'
+            }`}>
+              {completedOrders.length}
+            </span>
+          </button>
+        </div>
+
+        {/* Delivery Cards Stream */}
         {loading ? (
-          <div className="py-20 flex flex-col items-center justify-center gap-3 bg-white rounded-3xl border border-gray-200 shadow-sm">
-            <div className="w-8 h-8 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+          <div className="py-20 flex flex-col items-center justify-center gap-3 bg-white rounded-3xl border border-gray-100 shadow-sm">
+            <div className="w-8 h-8 border-4 border-green-600 border-t-transparent rounded-full animate-spin" />
             <p className="text-xs font-bold text-gray-500">Connecting to Live Dispatch System...</p>
           </div>
         ) : (activeTab === 'active' ? activeOrders : completedOrders).length === 0 ? (
-          <div className="py-20 text-center bg-white rounded-3xl border border-gray-200 shadow-sm p-6">
-            <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-3 text-2xl">
+          <div className="py-20 text-center bg-white rounded-3xl border border-gray-100 shadow-sm p-8">
+            <div className="w-16 h-16 bg-green-50 text-green-600 rounded-2xl flex items-center justify-center mx-auto mb-3 text-3xl shadow-xs">
               🚴
             </div>
-            <h3 className="text-base font-black text-gray-900">
-              {activeTab === 'active' ? 'No Active Deliveries Right Now' : 'No Deliveries Completed Yet'}
+            <h3 className="text-lg font-black text-gray-900">
+              {activeTab === 'active' ? 'No Active Deliveries Right Now' : 'No Deliveries Completed Yet Today'}
             </h3>
             <p className="text-xs text-gray-500 mt-1 max-w-sm mx-auto">
               {activeTab === 'active' 
-                ? 'When a customer places an order from checkout, it will immediately appear here for pickup and doorstep delivery!'
+                ? 'When a customer places an order from checkout, it will instantly appear here for pickup, navigation, and doorstep delivery!'
                 : 'Completed orders for today will appear here with cash and UPI collection summaries.'}
             </p>
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-5">
             {(activeTab === 'active' ? activeOrders : completedOrders).map((ord) => {
               const parsedItems: OrderItem[] = typeof ord.items === 'string' 
                 ? JSON.parse(ord.items || '[]') 
@@ -284,66 +376,74 @@ export default function RiderPortalPage() {
               return (
                 <div
                   key={ord.id}
-                  className={`bg-white rounded-3xl border p-5 shadow-sm transition space-y-4 ${
+                  className={`bg-white rounded-3xl border p-6 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.06)] hover:shadow-md transition-all space-y-4 ${
                     isArrived
-                      ? 'border-emerald-500 ring-2 ring-emerald-500/20 shadow-md'
+                      ? 'border-orange-500 ring-4 ring-orange-100'
                       : isDispatched
-                      ? 'border-blue-400 ring-2 ring-blue-400/20 shadow-md'
-                      : 'border-gray-200'
+                      ? 'border-green-500 ring-4 ring-green-50'
+                      : 'border-gray-100'
                   }`}
                 >
                   
-                  {/* Card Header: Order ID, Status & Bill Amount */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-gray-100 gap-2">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-white font-black text-sm shrink-0 shadow-xs ${
-                        isDelivered ? 'bg-emerald-600' :
-                        isArrived ? 'bg-emerald-500 animate-pulse' :
-                        isDispatched ? 'bg-blue-600' : 'bg-amber-500'
+                  {/* Card Header: Order ID, Status, Hub & Total Bill */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-gray-100 gap-3">
+                    <div className="flex items-center gap-3.5">
+                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white font-black text-lg shrink-0 shadow-sm ${
+                        isDelivered ? 'bg-green-600' :
+                        isArrived ? 'bg-orange-500 animate-pulse' :
+                        isDispatched ? 'bg-green-600' : 'bg-amber-500'
                       }`}>
                         {isDelivered ? '✓' : isArrived ? '🔔' : isDispatched ? '🚴' : '📦'}
                       </div>
                       <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-black text-base text-gray-900">{ord.id}</span>
-                          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                            isDelivered ? 'bg-emerald-100 text-emerald-800' :
-                            isArrived ? 'bg-emerald-100 text-emerald-900 border border-emerald-300' :
-                            isDispatched ? 'bg-blue-100 text-blue-800' :
-                            'bg-amber-100 text-amber-800'
+                        <div className="flex items-center gap-2.5">
+                          <span className="font-mono font-black text-lg text-gray-950">{ord.id}</span>
+                          <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                            isDelivered ? 'bg-green-100 text-green-900 border border-green-200' :
+                            isArrived ? 'bg-orange-100 text-orange-950 border border-orange-300 animate-pulse font-extrabold' :
+                            isDispatched ? 'bg-emerald-100 text-emerald-900 border border-emerald-200' :
+                            'bg-amber-100 text-amber-900 border border-amber-200'
                           }`}>
                             {isDelivered ? 'Delivered' :
-                             isArrived ? 'Arrived at Doorstep' :
-                             isDispatched ? 'On The Way (En Route)' :
+                             isArrived ? 'At Doorstep' :
+                             isDispatched ? 'On Way to Customer' :
                              'Store Packing'}
                           </span>
                         </div>
-                        <p className="text-[11px] text-gray-500 mt-0.5">
-                          Hub: <strong className="text-gray-700">{ord.assigned_branch_name || 'Annasandrapalya Branch'}</strong>
-                          {ord.branch_distance_km != null && ` • ${ord.branch_distance_km} km`}
+                        <p className="text-xs text-gray-500 font-medium mt-0.5 flex items-center gap-1.5">
+                          <Store className="w-3.5 h-3.5 text-green-600 shrink-0" />
+                          <span>Hub: <strong className="text-gray-800">{ord.assigned_branch_name || 'Annasandrapalya Branch'}</strong></span>
+                          {ord.branch_distance_km != null && <span className="text-green-700 font-bold">• {ord.branch_distance_km} km</span>}
                         </p>
                       </div>
                     </div>
 
-                    <div className="text-right">
-                      <div className="text-xl font-black text-gray-900">₹{ord.total_amount}</div>
-                      <span className={`text-[11px] font-bold ${isPaid ? 'text-emerald-700' : 'text-amber-700'}`}>
+                    <div className="text-left sm:text-right">
+                      <div className="text-2xl font-black text-gray-950">₹{ord.total_amount}</div>
+                      <span className={`inline-block text-[11px] font-bold px-2.5 py-0.5 rounded-lg mt-0.5 ${
+                        isPaid ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'
+                      }`}>
                         {isPaid ? '✓ Paid' : 'Collect on Delivery'}
                       </span>
                     </div>
                   </div>
 
-                  {/* Customer Info & Direct Call Action */}
-                  <div className="p-3.5 bg-gray-50 rounded-2xl border border-gray-100 flex flex-wrap items-center justify-between gap-3 text-xs">
-                    <div>
-                      <span className="text-[10px] font-black uppercase text-gray-400 block">Customer</span>
-                      <strong className="text-gray-900 text-sm">{ord.customer_name}</strong>
-                      <span className="text-gray-500 ml-2 font-mono">{ord.customer_phone}</span>
+                  {/* Customer Information & One-Tap Direct Calling */}
+                  <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex flex-wrap items-center justify-between gap-3 text-xs">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-white text-gray-700 flex items-center justify-center font-black border border-gray-200 shadow-xs">
+                        <User className="w-4 h-4 text-green-600" />
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-black uppercase text-gray-400 block">Customer Contact</span>
+                        <strong className="text-gray-900 text-sm">{ord.customer_name}</strong>
+                        <span className="text-gray-600 ml-2 font-mono font-bold">{ord.customer_phone}</span>
+                      </div>
                     </div>
 
                     <a
                       href={`tel:${ord.customer_phone}`}
-                      className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black flex items-center gap-1.5 shadow-sm transition active:scale-95 cursor-pointer"
+                      className="px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl font-black flex items-center gap-2 shadow-xs transition active:scale-95 cursor-pointer"
                     >
                       <Phone className="w-3.5 h-3.5" />
                       <span>Call Customer</span>
@@ -351,18 +451,18 @@ export default function RiderPortalPage() {
                   </div>
 
                   {/* Customer Delivery Address & Google Maps Navigation Action */}
-                  <div className="p-3.5 bg-blue-50/70 border border-blue-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                  <div className="p-4 bg-green-50/70 border border-green-200/80 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                     <div className="min-w-0 flex-1">
-                      <span className="text-[10px] font-black uppercase text-blue-800 block flex items-center gap-1">
-                        <MapPin className="w-3 h-3 text-blue-600" />
-                        <span>Delivery Location</span>
+                      <span className="text-[10px] font-black uppercase text-green-800 block flex items-center gap-1.5">
+                        <MapPin className="w-3.5 h-3.5 text-green-600" />
+                        <span>Delivery Address</span>
                       </span>
-                      <p className="font-bold text-gray-900 leading-snug mt-0.5">
+                      <p className="font-bold text-gray-900 leading-snug mt-1 text-xs sm:text-sm">
                         {ord.delivery_address}
                       </p>
                       {ord.delivery_notes && (
-                        <div className="text-[11px] text-blue-900 mt-1 font-semibold">
-                          Note: {ord.delivery_notes}
+                        <div className="text-[11px] text-green-900 mt-1 font-semibold">
+                          Instructions: <strong className="text-green-950">{ord.delivery_notes}</strong>
                         </div>
                       )}
                     </div>
@@ -371,23 +471,23 @@ export default function RiderPortalPage() {
                       href={googleMapsNavigationUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-black flex items-center justify-center gap-1.5 shadow-sm transition active:scale-95 cursor-pointer shrink-0"
+                      className="px-4 py-2.5 bg-white hover:bg-green-600 hover:text-white text-green-800 border-2 border-green-600 rounded-xl font-black flex items-center justify-center gap-2 shadow-xs transition active:scale-95 cursor-pointer shrink-0"
                     >
-                      <Navigation className="w-3.5 h-3.5" />
+                      <Navigation className="w-4 h-4 text-green-600 group-hover:text-white" />
                       <span>Open Google Maps</span>
-                      <ExternalLink className="w-3 h-3 text-blue-200" />
+                      <ExternalLink className="w-3.5 h-3.5" />
                     </a>
                   </div>
 
-                  {/* Items Summary (Expandable / Preview) */}
+                  {/* Items Summary (Badges) */}
                   <div className="text-xs space-y-1.5">
                     <span className="text-[10px] font-black uppercase text-gray-400 block">
-                      Parcel Contents ({parsedItems.length} items)
+                      Parcel Contents ({parsedItems.length} {parsedItems.length === 1 ? 'item' : 'items'})
                     </span>
                     <div className="flex flex-wrap gap-2">
                       {parsedItems.map((it, idx) => (
-                        <span key={idx} className="px-2.5 py-1 bg-gray-100 rounded-lg text-gray-800 font-semibold text-[11px]">
-                          {it.name} <strong className="text-gray-900">×{it.quantity}</strong>
+                        <span key={idx} className="px-3 py-1.5 bg-gray-100/90 rounded-xl text-gray-800 font-bold text-xs border border-gray-200/60">
+                          {it.name} <strong className="text-gray-950">×{it.quantity}</strong>
                         </span>
                       ))}
                     </div>
@@ -398,13 +498,13 @@ export default function RiderPortalPage() {
                   {/* ============================================================= */}
                   <div className="pt-3 border-t border-gray-100 space-y-3">
                     
-                    {/* STEP 1: START TRIP (If still received or packing) */}
+                    {/* STEP 1: START TRIP (Pick up from hub) */}
                     {(isReceived || isApproved) && (
                       <button
                         type="button"
                         disabled={actionLoadingId === ord.id}
                         onClick={() => handleUpdateStatus(ord.id, { status: 'dispatched' })}
-                        className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-xl text-xs flex items-center justify-center gap-2 shadow-sm transition active:scale-98 cursor-pointer disabled:opacity-50"
+                        className="w-full py-4 bg-green-600 hover:bg-green-700 text-white font-black rounded-2xl text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md transition active:scale-[0.99] cursor-pointer disabled:opacity-50"
                       >
                         <Bike className="w-4 h-4" />
                         <span>Start Delivery Trip (Pick up from Store Hub)</span>
@@ -420,7 +520,7 @@ export default function RiderPortalPage() {
                           status: 'arrived',
                           arrival_time: new Date().toISOString()
                         })}
-                        className="w-full py-3.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-black rounded-2xl text-xs flex items-center justify-center gap-2 shadow-md transition active:scale-98 cursor-pointer disabled:opacity-50"
+                        className="w-full py-4 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-600 hover:to-orange-600 text-white font-black rounded-2xl text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg transition active:scale-[0.99] cursor-pointer disabled:opacity-50"
                       >
                         <Bell className="w-4 h-4 animate-bounce" />
                         <span>📍 I Have Reached / Arrived at Doorstep (Notify Customer)</span>
@@ -429,27 +529,27 @@ export default function RiderPortalPage() {
 
                     {/* STEP 3: PAYMENT COLLECTION & CONFIRMATION (When arrived) */}
                     {isArrived && (
-                      <div className="p-4 bg-emerald-50/80 border border-emerald-200 rounded-2xl space-y-3">
+                      <div className="p-5 bg-gradient-to-r from-orange-50/80 via-amber-50/70 to-green-50/80 border-2 border-orange-300 rounded-3xl space-y-3">
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-black text-emerald-950 flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-emerald-600 animate-ping" />
-                            <span>Doorstep Payment Collection (₹{ord.total_amount})</span>
+                          <span className="text-xs font-black text-gray-900 flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full bg-orange-500 animate-ping" />
+                            <span>Doorstep Payment Due: ₹{ord.total_amount}</span>
                           </span>
-                          <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${isPaid ? 'bg-emerald-200 text-emerald-900' : 'bg-amber-100 text-amber-800'}`}>
-                            {isPaid ? '✓ Paid' : 'Pending Payment'}
+                          <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-lg ${isPaid ? 'bg-green-200 text-green-900' : 'bg-amber-200 text-amber-900'}`}>
+                            {isPaid ? '✓ Paid' : 'Collect from Customer'}
                           </span>
                         </div>
 
                         {!isPaid ? (
-                          <div className="grid sm:grid-cols-2 gap-2">
+                          <div className="grid sm:grid-cols-2 gap-2.5">
                             {/* Option A: Generate UPI QR on Rider Phone */}
                             <button
                               type="button"
                               onClick={() => setSelectedOrderForQr(ord)}
-                              className="py-2.5 px-3 bg-white hover:bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer shadow-xs"
+                              className="py-3 px-4 bg-white hover:bg-green-50 border-2 border-green-600 text-green-800 rounded-2xl text-xs font-black flex items-center justify-center gap-2 transition cursor-pointer shadow-xs active:scale-95"
                             >
-                              <QrCode className="w-4 h-4 text-emerald-600" />
-                              <span>Show UPI QR Code</span>
+                              <QrCode className="w-4 h-4 text-green-600" />
+                              <span>Show Instant UPI QR Code</span>
                             </button>
 
                             {/* Option B: Confirm Cash Collected */}
@@ -461,14 +561,14 @@ export default function RiderPortalPage() {
                                 payment_method: 'Cash on Delivery',
                                 payment_collected_by: riderProfile.name
                               })}
-                              className="py-2.5 px-3 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer shadow-xs disabled:opacity-50"
+                              className="py-3 px-4 bg-green-700 hover:bg-green-800 text-white rounded-2xl text-xs font-black flex items-center justify-center gap-2 transition cursor-pointer shadow-xs active:scale-95 disabled:opacity-50"
                             >
                               <Banknote className="w-4 h-4" />
                               <span>Confirm Cash Collected (₹{ord.total_amount})</span>
                             </button>
                           </div>
                         ) : (
-                          <div className="p-2.5 bg-white rounded-xl border border-emerald-200 flex items-center justify-between text-xs font-bold text-emerald-900">
+                          <div className="p-3 bg-white rounded-2xl border border-green-200 flex items-center justify-between text-xs font-bold text-green-900">
                             <span>✓ Payment Received: ₹{ord.total_amount}</span>
                             <span className="text-[10px] text-gray-500">{ord.payment_status}</span>
                           </div>
@@ -482,7 +582,7 @@ export default function RiderPortalPage() {
                             status: 'delivered',
                             payment_status: isPaid ? ord.payment_status : 'Paid (Handover Cash/UPI)'
                           })}
-                          className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs flex items-center justify-center gap-2 shadow-md transition active:scale-98 cursor-pointer disabled:opacity-50 mt-2"
+                          className="w-full py-4 bg-green-600 hover:bg-green-700 text-white font-black rounded-2xl text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md transition active:scale-[0.99] cursor-pointer disabled:opacity-50 mt-2"
                         >
                           <CheckCircle2 className="w-4 h-4" />
                           <span>Handover Parcel & Complete Delivery ✓</span>
@@ -492,8 +592,11 @@ export default function RiderPortalPage() {
 
                     {/* COMPLETED STATUS */}
                     {isDelivered && (
-                      <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 flex items-center justify-between text-xs text-emerald-900 font-bold">
-                        <span>✓ Successfully Delivered to Customer</span>
+                      <div className="p-3.5 bg-green-50 rounded-2xl border border-green-200 flex items-center justify-between text-xs text-green-900 font-bold">
+                        <span className="flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-green-600" />
+                          <span>Successfully Delivered to Customer</span>
+                        </span>
                         <span className="text-[10px] text-gray-500 font-mono">
                           {new Date(ord.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </span>
@@ -508,32 +611,41 @@ export default function RiderPortalPage() {
       </main>
 
       {/* ===================================================================== */}
-      {/* RIDER UPI COLLECTION QR MODAL */}
+      {/* 4. RIDER UPI COLLECTION QR MODAL (MATCHES MD FRESH DESIGN) */}
       {/* ===================================================================== */}
       {selectedOrderForQr && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-sm w-full p-6 text-center border border-gray-100 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 text-center border border-gray-100 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-200">
+            
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
               <div className="flex items-center gap-2">
-                <QrCode className="w-5 h-5 text-emerald-600" />
-                <h3 className="font-black text-gray-900 text-sm">Rider Collection UPI QR</h3>
+                <Image 
+                  src="/images/logo.png" 
+                  alt="MD FRESH Logo" 
+                  width={32} 
+                  height={32} 
+                  className="object-contain" 
+                />
+                <h3 className="font-black text-gray-900 text-sm">MD FRESH Instant UPI QR</h3>
               </div>
               <button
                 onClick={() => setSelectedOrderForQr(null)}
-                className="text-gray-400 hover:text-gray-700 p-1 text-lg cursor-pointer"
+                className="text-gray-400 hover:text-gray-700 p-1 text-base cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
             <div>
-              <span className="text-[10px] font-black uppercase text-gray-400 block">Collect from Customer</span>
+              <span className="text-[10px] font-black uppercase text-gray-400 tracking-wider block">
+                Doorstep UPI Collection
+              </span>
               <div className="text-3xl font-black text-gray-900 mt-0.5">₹{selectedOrderForQr.total_amount}</div>
               <p className="text-xs text-gray-500 mt-1 font-mono">Order #{selectedOrderForQr.id}</p>
             </div>
 
-            {/* Scannable Dynamic NPCI QR */}
-            <div className="p-3 bg-gray-50 rounded-2xl border-2 border-emerald-500/40 inline-block shadow-inner">
+            {/* Dynamic NPCI UPI QR */}
+            <div className="p-3.5 bg-gray-50 rounded-2xl border-2 border-green-500/40 inline-block shadow-inner">
               <div className="w-56 h-56 relative bg-white p-1 rounded-xl">
                 <Image
                   src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=8&data=${encodeURIComponent(`upi://pay?pa=mdfresh@upi&pn=MD%20Fresh%20Delivery&am=${selectedOrderForQr.total_amount}&cu=INR&tn=${encodeURIComponent('Payment for ' + selectedOrderForQr.id)}&tr=${selectedOrderForQr.id}`)}`}
@@ -542,8 +654,8 @@ export default function RiderPortalPage() {
                   className="object-contain"
                 />
               </div>
-              <span className="text-[10px] font-black text-emerald-800 mt-1 block">
-                Ask customer to scan with PhonePe / GPay / Paytm
+              <span className="text-[10px] font-black text-green-800 mt-2 block">
+                Scan with PhonePe • Google Pay • Paytm • BHIM
               </span>
             </div>
 
@@ -555,7 +667,7 @@ export default function RiderPortalPage() {
                   payment_method: 'UPI to Delivery Partner',
                   payment_collected_by: riderProfile.name
                 })}
-                className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer"
+                className="w-full py-3.5 bg-green-600 hover:bg-green-700 text-white font-black rounded-2xl text-xs shadow-md transition flex items-center justify-center gap-2 cursor-pointer active:scale-95"
               >
                 <Check className="w-4 h-4 stroke-[3]" />
                 <span>Confirm UPI Payment Received</span>
@@ -566,7 +678,7 @@ export default function RiderPortalPage() {
                 onClick={() => setSelectedOrderForQr(null)}
                 className="w-full py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl text-xs cursor-pointer transition"
               >
-                Close
+                Cancel
               </button>
             </div>
           </div>
