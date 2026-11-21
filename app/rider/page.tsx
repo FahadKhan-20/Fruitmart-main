@@ -71,12 +71,49 @@ export default function RiderPortalPage() {
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
 
+  // Rider Access Protection Gate
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState('');
+  const [isCheckingAuth, setIsCheckingAuth] = useState(false);
+
   // Default rider profile
   const riderProfile = {
     name: 'Rajesh Kumar',
     phone: '+91 98765 00001',
     vehicleNo: 'KA 03 MD 4521',
     hub: 'Annasandrapalya Branch Hub'
+  };
+
+  useEffect(() => {
+    try {
+      const auth = sessionStorage.getItem('mdfresh_rider_auth');
+      if (auth === 'true') {
+        setIsAuthenticated(true);
+      }
+    } catch (e) {}
+    setIsCheckingAuth(false);
+  }, []);
+
+  const handleRiderLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (pinInput.trim() === '1234') {
+      try {
+        sessionStorage.setItem('mdfresh_rider_auth', 'true');
+      } catch (e) {}
+      setIsAuthenticated(true);
+      setPinError('');
+    } else {
+      setPinError('Invalid Passcode. Enter 4-digit Partner PIN (Default: 1234)');
+    }
+  };
+
+  const handleRiderLogout = () => {
+    try {
+      sessionStorage.removeItem('mdfresh_rider_auth');
+    } catch (e) {}
+    setIsAuthenticated(false);
+    setPinInput('');
   };
 
   // Fetch orders from database
@@ -156,6 +193,77 @@ export default function RiderPortalPage() {
   );
   const completedOrders = orders.filter((o) => o.status === 'delivered');
 
+  if (isCheckingAuth) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-50 via-orange-50 to-amber-50/50 flex items-center justify-center font-sans">
+        <div className="w-8 h-8 border-4 border-green-600 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // PASSCODE ACCESS CONTROL GATE FOR DELIVERY PARTNERS
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-50 via-orange-50 to-amber-50/50 flex flex-col items-center justify-center p-4 font-sans">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl border border-gray-100 text-center space-y-6">
+          <div className="w-16 h-16 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto shadow-sm">
+            <Bike className="w-8 h-8 text-green-600" />
+          </div>
+
+          <div>
+            <span className="px-3 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-full text-[10px] font-black uppercase tracking-widest inline-block mb-2">
+              RESTRICTED PARTNER ACCESS
+            </span>
+            <h1 className="text-2xl font-black text-gray-900 tracking-tight">Delivery Partner App</h1>
+            <p className="text-xs text-gray-500 mt-1">
+              Authorized MD FRESH Riders Only. Enter your 4-digit partner passcode to access active delivery trips.
+            </p>
+          </div>
+
+          <form onSubmit={handleRiderLogin} className="space-y-4">
+            <div>
+              <input
+                type="password"
+                maxLength={4}
+                value={pinInput}
+                onChange={(e) => setPinInput(e.target.value)}
+                placeholder="••••"
+                autoFocus
+                className="w-full text-center text-3xl font-mono tracking-[0.5em] py-3.5 px-4 bg-gray-50 border-2 border-gray-200 focus:border-green-600 focus:bg-white rounded-2xl outline-none transition"
+              />
+              <span className="text-[11px] text-gray-400 mt-1.5 block">
+                Partner PIN: <strong className="text-green-700 font-bold">1234</strong>
+              </span>
+            </div>
+
+            {pinError && (
+              <div className="p-3 bg-red-50 text-red-700 text-xs font-bold rounded-xl border border-red-200">
+                {pinError}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="w-full py-4 bg-green-600 hover:bg-green-700 text-white font-black rounded-2xl text-sm shadow-md transition active:scale-[0.99] cursor-pointer"
+            >
+              Unlock Rider Console
+            </button>
+          </form>
+
+          <div className="pt-2 border-t border-gray-100">
+            <Link
+              href="/"
+              className="text-xs font-bold text-gray-500 hover:text-green-700 transition inline-flex items-center gap-1.5"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Back to MD FRESH Storefront</span>
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 via-orange-50 to-amber-50/50 flex flex-col font-sans">
       
@@ -216,6 +324,15 @@ export default function RiderPortalPage() {
               >
                 <RefreshCw className="w-3.5 h-3.5 text-gray-600" />
                 <span className="hidden sm:inline">Sync</span>
+              </button>
+
+              {/* Lock / Logout Button */}
+              <button
+                onClick={handleRiderLogout}
+                className="flex items-center gap-1 px-3 py-2 bg-gray-100 hover:bg-red-50 hover:text-red-700 text-gray-700 rounded-xl text-xs font-bold transition shadow-xs cursor-pointer active:scale-95"
+                title="Lock Rider App"
+              >
+                <span>Lock</span>
               </button>
 
               {/* Back to Storefront Link */}
