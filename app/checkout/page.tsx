@@ -114,6 +114,18 @@ export default function CheckoutPage() {
     'none' | 'phonepe' | 'gpay' | 'paytm' | 'bhim' | 'upi_qr' | 'card' | 'netbanking' | 'wallet'
   >('none');
 
+  // Per-order dynamic Razorpay UPI QR (new QR for every order, confirmed server-side)
+  const [upiQr, setUpiQr] = useState<{
+    orderId: string;
+    imageUrl: string;
+    amount: number;
+    closeBy: number;
+  } | null>(null);
+  const [upiQrLoading, setUpiQrLoading] = useState(false);
+  const [upiQrError, setUpiQrError] = useState('');
+  const [upiQrExpired, setUpiQrExpired] = useState(false);
+  const [upiQrSecondsLeft, setUpiQrSecondsLeft] = useState(0);
+
   const total = getTotalPrice();
   const deliveryFee = total > 399 ? 0 : (total > 0 ? 25 : 0);
   const handlingFee = total > 0 ? 2 : 0;
@@ -347,19 +359,10 @@ export default function CheckoutPage() {
     if (activePaymentTab === 'upi') {
       if (selectedUpiApp === 'phonepe') {
         setShowDirectAppModal('phonepe');
-        if (typeof window !== 'undefined' && /Mobi|Android/i.test(navigator.userAgent)) {
-          window.location.href = phonepeDeepLink;
-        }
       } else if (selectedUpiApp === 'gpay') {
         setShowDirectAppModal('gpay');
-        if (typeof window !== 'undefined' && /Mobi|Android/i.test(navigator.userAgent)) {
-          window.location.href = gpayDeepLink;
-        }
       } else if (selectedUpiApp === 'paytm') {
         setShowDirectAppModal('paytm');
-        if (typeof window !== 'undefined' && /Mobi|Android/i.test(navigator.userAgent)) {
-          window.location.href = paytmDeepLink;
-        }
       } else {
         setShowDirectAppModal('upi_qr');
       }
@@ -386,7 +389,52 @@ export default function CheckoutPage() {
     setPaymentError('');
 
     try {
-      const orderIdToUse = pendingOrderId || `MD-${Date.now().toString().slice(-6)}`;
+      const orderIdToUse = pendingOrderId || newOrderId();
+      const orderPayload = buildOrderPayload(
+        orderIdToUse,
+        paymentMethodName,
+        paymentStatus,
+        razorpayPaymentId || `pay_${Date.now().toString(36)}`,
+        razorpayOrderId || null,
+        razorpaySignature || null
+      );
+
+      // 1. Post to SQLite database API
+      const saveRes = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(orderPayload),
+      });
+
+      if (!saveRes.ok) {
+        const saveErr = await saveRes.json();
+        console.warn('API order save note:', saveErr);
+      }
+
+      completeOrderLocally(orderIdToUse, orderPayload);
+    } catch (err: any) {
+      console.error('Finalize order error:', err);
+      setPaymentError(err.message || 'Payment confirmation failed. Please retry.');
+      setIsVerifyingPayment(false);
+    }
+  };
+
+  // Unique order ID. Safe when many customers check out at the same time.
+  function newOrderId() {
+    const rand = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID().replace(/-/g, '').slice(0, 6)
+      : Math.random().toString(36).slice(2, 8);
+    return `MD-${Date.now().toString(36)}${rand}`.toUpperCase();
+  }
+
+  function buildOrderPayload(
+    orderIdToUse: string,
+    paymentMethodName: string,
+    paymentStatus: string,
+    razorpayPaymentId: string | null,
+    razorpayOrderId: string | null,
+    razorpaySignature: string | null
+  ) {
       const fullDeliveryAddr = `${houseFlatNo ? 'Flat/House: ' + houseFlatNo + ', ' : ''}${landmark ? 'Landmark: ' + landmark + ', ' : ''}${fullAddress || location || 'Bengaluru, Karnataka'}`;
 
       // Automatically route to the geographically nearest branch using GPS coordinates / address
@@ -418,47 +466,132 @@ export default function CheckoutPage() {
         total_amount: finalTotal,
         payment_method: paymentMethodName,
         payment_status: paymentStatus,
-        razorpay_payment_id: razorpayPaymentId || `pay_${Date.now().toString(36)}`,
-        razorpay_order_id: razorpayOrderId || null,
-        razorpay_signature: razorpaySignature || null,
+        razorpay_payment_id: razorpayPaymentId,
+        razorpay_order_id: razorpayOrderId,
+        razorpay_signature: razorpaySignature,
         status: 'received',
         delivery_notes: deliveryNote.join(', '),
       };
+      return orderPayload;
+  }
 
-      // 1. Post to SQLite database API
-      const saveRes = await fetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(orderPayload),
-      });
+  // Save in local store, clear cart, go to live order tracker.
+  function completeOrderLocally(orderIdToUse: string, orderPayload: ReturnType<typeof buildOrderPayload>) {
+    addOrder({
+      id: orderIdToUse,
+      createdAt: new Date().toISOString(),
+      items: orderPayload.items,
+      totalAmount: orderPayload.total_amount,
+      deliveryFee: orderPayload.delivery_fee,
+      paymentMethod: orderPayload.payment_method,
+      status: 'Order Placed',
+      deliveryAddress: orderPayload.delivery_address,
+    });
+    clearCart();
+    setShowDirectAppModal('none');
+    router.push(`/success?orderId=${orderIdToUse}`);
+  }
 
-      if (!saveRes.ok) {
-        const saveErr = await saveRes.json();
-        console.warn('API order save note:', saveErr);
+  // Create a new order in "Awaiting Payment" state, then a new single-use QR for it.
+  const startUpiQrPayment = async (forceNew = false) => {
+    setUpiQrError('');
+    if (!customerPhone || customerPhone.length < 10) {
+      setUpiQrError('Enter a valid 10-digit mobile number before paying.');
+      return;
+    }
+    // Reuse the current QR when it is still valid for the same amount.
+    if (!forceNew && upiQr && upiQr.amount === finalTotal && upiQr.closeBy * 1000 > Date.now()) {
+      return;
+    }
+
+    setUpiQrLoading(true);
+    setUpiQrExpired(false);
+    try {
+      // Same unpaid order can get a fresh QR; otherwise make a new order.
+      let orderIdToUse = upiQr && upiQr.amount === finalTotal ? upiQr.orderId : '';
+      if (!orderIdToUse) {
+        orderIdToUse = newOrderId();
+        const payload = buildOrderPayload(orderIdToUse, 'UPI QR (Razorpay)', 'Awaiting Payment', null, null, null);
+        const saveRes = await fetch('/api/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!saveRes.ok) {
+          const saveErr = await saveRes.json().catch(() => ({}));
+          throw new Error(saveErr.error || 'Could not create order');
+        }
       }
 
-      // 2. Save in local Zustand store
-      addOrder({
-        id: orderIdToUse,
-        createdAt: new Date().toISOString(),
-        items: orderPayload.items,
-        totalAmount: finalTotal,
-        deliveryFee,
-        paymentMethod: paymentMethodName,
-        status: 'Order Placed',
-        deliveryAddress: fullDeliveryAddr,
+      const qrRes = await fetch('/api/payments/upi-qr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: orderIdToUse }),
       });
+      const qrData = await qrRes.json();
+      if (!qrRes.ok || !qrData.success) {
+        throw new Error(qrData.error || 'Could not generate UPI QR');
+      }
 
-      // 3. Clear cart & redirect to live order tracker
-      clearCart();
-      setShowDirectAppModal('none');
-      router.push(`/success?orderId=${orderIdToUse}`);
+      setUpiQr({
+        orderId: orderIdToUse,
+        imageUrl: qrData.imageUrl,
+        amount: qrData.amount,
+        closeBy: qrData.closeBy,
+      });
     } catch (err: any) {
-      console.error('Finalize order error:', err);
-      setPaymentError(err.message || 'Payment confirmation failed. Please retry.');
-      setIsVerifyingPayment(false);
+      setUpiQrError(err.message || 'Could not generate UPI QR');
+    } finally {
+      setUpiQrLoading(false);
     }
   };
+
+  const isUpiModal =
+    showDirectAppModal === 'phonepe' ||
+    showDirectAppModal === 'gpay' ||
+    showDirectAppModal === 'paytm' ||
+    showDirectAppModal === 'bhim' ||
+    showDirectAppModal === 'upi_qr';
+
+  // Generate the QR as soon as a UPI modal opens.
+  useEffect(() => {
+    if (isUpiModal) startUpiQrPayment();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isUpiModal]);
+
+  // Poll the server every 3 s. Server confirms with Razorpay (or webhook already did).
+  useEffect(() => {
+    if (!isUpiModal || !upiQr || upiQrExpired) return;
+    let stopped = false;
+
+    const tick = async () => {
+      const secondsLeft = Math.max(0, upiQr.closeBy - Math.floor(Date.now() / 1000));
+      setUpiQrSecondsLeft(secondsLeft);
+      try {
+        const res = await fetch(`/api/payments/upi-qr?orderId=${encodeURIComponent(upiQr.orderId)}`);
+        const data = await res.json();
+        if (stopped) return;
+        if (data.paid) {
+          stopped = true;
+          const payload = buildOrderPayload(upiQr.orderId, 'UPI QR (Razorpay)', 'Paid', null, null, null);
+          completeOrderLocally(upiQr.orderId, payload);
+          setUpiQr(null);
+          return;
+        }
+      } catch (e) {
+        console.warn('UPI status check failed, retrying:', e);
+      }
+      if (secondsLeft === 0) setUpiQrExpired(true);
+    };
+
+    tick();
+    const timer = setInterval(tick, 3000);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isUpiModal, upiQr, upiQrExpired]);
 
   if (items.length === 0) {
     return (
@@ -1136,86 +1269,47 @@ export default function CheckoutPage() {
             </p>
 
             {/* UPI QR & App Trigger */}
-            {(showDirectAppModal === 'phonepe' || showDirectAppModal === 'gpay' || showDirectAppModal === 'paytm' || showDirectAppModal === 'bhim' || showDirectAppModal === 'upi_qr') && (
+            {isUpiModal && (
               <>
                 <div className="p-3 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200 inline-block mb-3">
-                  <div className="w-44 h-44 relative bg-white p-1 rounded-xl">
-                    <Image
-                      src={qrCodeImageUrl}
-                      alt="Official UPI QR"
-                      fill
-                      className="object-contain"
-                    />
+                  <div className="w-52 h-52 relative bg-white p-1 rounded-xl flex items-center justify-center overflow-hidden">
+                    {upiQrLoading && <Loader2 className="w-8 h-8 animate-spin text-green-600" />}
+                    {!upiQrLoading && upiQr && !upiQrExpired && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={upiQr.imageUrl} alt={`UPI QR for order ${upiQr.orderId}`} className="w-full h-full object-contain" />
+                    )}
+                    {!upiQrLoading && upiQrExpired && (
+                      <span className="text-xs font-bold text-red-600">QR expired</span>
+                    )}
+                    {!upiQrLoading && upiQrError && (
+                      <span className="text-xs font-bold text-red-600 px-2">{upiQrError}</span>
+                    )}
                   </div>
-                  <span className="text-[10px] font-black text-green-700 mt-1 block">
-                    Official NPCI Dynamic UPI QR
-                  </span>
-                </div>
-
-                <div className="mb-3 bg-gray-100 p-2.5 rounded-xl flex items-center justify-between text-xs">
-                  <span className="text-gray-600 font-mono">mdfresh@upi</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText('mdfresh@upi');
-                      setCopiedUpi(true);
-                      setTimeout(() => setCopiedUpi(false), 2000);
-                    }}
-                    className="text-green-700 font-bold hover:underline flex items-center gap-1 cursor-pointer"
-                  >
-                    {copiedUpi ? 'Copied!' : 'Copy UPI'}
-                  </button>
+                  {upiQr && !upiQrExpired && !upiQrLoading && (
+                    <span className="text-[10px] font-black text-green-700 mt-1 block">
+                      Order {upiQr.orderId} • expires in {Math.floor(upiQrSecondsLeft / 60)}:{String(upiQrSecondsLeft % 60).padStart(2, '0')}
+                    </span>
+                  )}
                 </div>
 
                 <div className="space-y-2 pt-1">
-                  {showDirectAppModal === 'phonepe' && (
-                    <a
-                      href={phonepeDeepLink}
-                      className="w-full py-3 bg-[#5f259f] hover:bg-[#4c1e80] text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-md cursor-pointer transition active:scale-95"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                      <span>Open PhonePe App Directly</span>
-                    </a>
+                  {upiQr && !upiQrExpired && !upiQrLoading && (
+                    <div className="w-full py-3 bg-green-50 text-green-800 font-bold rounded-xl text-xs flex items-center justify-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Scan with any UPI app. Waiting for payment…</span>
+                    </div>
                   )}
 
-                  {showDirectAppModal === 'gpay' && (
-                    <a
-                      href={gpayDeepLink}
-                      className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-md cursor-pointer transition active:scale-95"
+                  {(upiQrExpired || upiQrError) && !upiQrLoading && (
+                    <button
+                      type="button"
+                      onClick={() => startUpiQrPayment(true)}
+                      className="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-2"
                     >
-                      <ExternalLink className="w-4 h-4" />
-                      <span>Open Google Pay App Directly</span>
-                    </a>
+                      <QrCode className="w-4 h-4" />
+                      <span>Generate New QR</span>
+                    </button>
                   )}
-
-                  {showDirectAppModal === 'paytm' && (
-                    <a
-                      href={paytmDeepLink}
-                      className="w-full py-3 bg-[#002e6e] hover:bg-[#00204d] text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-md cursor-pointer transition active:scale-95"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                      <span>Open Paytm App Directly</span>
-                    </a>
-                  )}
-
-                  <button
-                    type="button"
-                    disabled={isVerifyingPayment}
-                    onClick={() => finalizeOrder(`UPI (${showDirectAppModal.toUpperCase()})`, 'Paid')}
-                    className="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
-                  >
-                    {isVerifyingPayment ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>Confirming Order...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Check className="w-4 h-4" />
-                        <span>I Have Completed Payment</span>
-                      </>
-                    )}
-                  </button>
                 </div>
               </>
             )}

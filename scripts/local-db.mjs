@@ -478,6 +478,14 @@ const server = http.createServer(async (req, res) => {
           updates.push('payment_status = ?');
           params.push(body.payment_status);
         }
+        if (body.razorpay_order_id) {
+          updates.push('razorpay_order_id = ?');
+          params.push(body.razorpay_order_id);
+        }
+        if (body.razorpay_payment_id) {
+          updates.push('razorpay_payment_id = ?');
+          params.push(body.razorpay_payment_id);
+        }
         if (body.assigned_branch_id) {
           updates.push('assigned_branch_id = ?');
           params.push(body.assigned_branch_id);
