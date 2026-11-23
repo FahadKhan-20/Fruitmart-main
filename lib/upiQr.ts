@@ -13,9 +13,16 @@ export const PAYMENT_NOT_RECEIVED = 'Payment not received';
 export function getShopUpi() {
   const vpa = (process.env.SHOP_UPI_ID || '').trim();
   if (!/^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/.test(vpa)) return null;
+  // Merchant UPI IDs (for example a bank's PayZapp/Vyapar QR) carry a merchant category code
+  // (mc) and a fixed reference (tr) in their printed QR. Some banks reject a payment to a
+  // merchant ID when these are missing or changed, so copy them from the shop's QR here.
+  const mc = (process.env.SHOP_UPI_MC || '').trim();
+  const tr = (process.env.SHOP_UPI_TR || '').trim();
   return {
     vpa,
     name: (process.env.SHOP_UPI_NAME || 'MD Fresh Store').trim().slice(0, 50),
+    mc: /^\d{4}$/.test(mc) ? mc : null,
+    tr: /^[a-zA-Z0-9.\-_]{1,35}$/.test(tr) ? tr : null,
   };
 }
 
@@ -45,13 +52,21 @@ export async function uniqueUpiAmount(baseTotal: number) {
   return (basePaise + pick) / 100;
 }
 
-export function buildUpiIntent(vpa: string, name: string, amount: number, orderId: string) {
+export function buildUpiIntent(
+  shop: { vpa: string; name: string; mc?: string | null; tr?: string | null },
+  amount: number,
+  orderId: string
+) {
   // The UPI ID is already validated (letters, digits, . - _ and one @), so it is used as is:
   // some UPI apps do not decode %40 back to @. Other values are percent-encoded (%20 for spaces).
+  // For a merchant ID the shop's own fixed reference is kept in tr; the order ID then travels
+  // in the note (tn), and the unique paise amount still identifies the order.
   const enc = encodeURIComponent;
+  const tr = shop.tr || orderId;
   return (
-    `upi://pay?pa=${vpa}&pn=${enc(name)}&am=${amount.toFixed(2)}&cu=INR` +
-    `&tr=${enc(orderId)}&tn=${enc(`Order ${orderId}`)}`
+    `upi://pay?pa=${shop.vpa}&pn=${enc(shop.name)}` +
+    (shop.mc ? `&mc=${shop.mc}` : '') +
+    `&am=${amount.toFixed(2)}&cu=INR&tr=${enc(tr)}&tn=${enc(`Order ${orderId}`)}`
   );
 }
 

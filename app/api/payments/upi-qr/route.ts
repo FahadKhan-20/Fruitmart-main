@@ -45,7 +45,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Shop UPI ID is not configured' }, { status: 503 });
       }
       const amount = Math.round(Number(order.total_amount) * 100) / 100;
-      const upiIntent = buildUpiIntent(shop.vpa, shop.name, amount, orderId);
+      const upiIntent = buildUpiIntent(shop, amount, orderId);
       const imageUrl = await QRCode.toDataURL(upiIntent, { width: 320, margin: 1, errorCorrectionLevel: 'M' });
       return NextResponse.json({ success: true, mode: 'doorstep', imageUrl, upiIntent, payee: shop.name, amount });
     }
@@ -66,7 +66,7 @@ export async function POST(req: Request) {
       if (!shop) {
         return NextResponse.json({ error: 'Shop UPI ID is not configured' }, { status: 503 });
       }
-      const upiIntent = buildUpiIntent(shop.vpa, shop.name, amountPaise / 100, orderId);
+      const upiIntent = buildUpiIntent(shop, amountPaise / 100, orderId);
       const imageUrl = await QRCode.toDataURL(upiIntent, { width: 320, margin: 1, errorCorrectionLevel: 'M' });
       return NextResponse.json({
         success: true,
