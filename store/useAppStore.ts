@@ -120,33 +120,42 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   setLocationModalOpen: (isOpen) => set({ isLocationModalOpen: isOpen }),
 
-  // Saved Addresses
+  // Saved Addresses (Preset for the 4 MD FRESH Branches)
   addresses: [
     {
       id: 'addr-1',
       type: 'Home',
-      shortName: 'Koramangala, Bengaluru',
-      fullAddress: 'Flat 402, Green Glen Layout, Koramangala, Bengaluru, Karnataka 560034',
-      latitude: 12.9352,
-      longitude: 77.6245,
+      shortName: 'Annasandrapalya, Bengaluru',
+      fullAddress: 'Annasandrapalya Main Rd, HAL Post, Bengaluru, Karnataka 560017',
+      latitude: 12.9592,
+      longitude: 77.6548,
       isDefault: true,
     },
     {
       id: 'addr-2',
       type: 'Work',
-      shortName: 'Indiranagar, Bengaluru',
-      fullAddress: '100ft Road, 2nd Floor, Indiranagar, Bengaluru, Karnataka 560038',
-      latitude: 12.9716,
-      longitude: 77.6412,
+      shortName: 'Kodihalli, Bengaluru',
+      fullAddress: 'HAL 2nd Stage, Old Airport Rd, Kodihalli, Bengaluru, Karnataka 560008',
+      latitude: 12.9631,
+      longitude: 77.6499,
       isDefault: false,
     },
     {
       id: 'addr-3',
       type: 'Other',
-      shortName: 'Whitefield, Bengaluru',
-      fullAddress: 'ITPL Main Rd, Near Hope Farm, Whitefield, Bengaluru 560066',
-      latitude: 12.9854,
-      longitude: 77.7279,
+      shortName: 'LB Shastri Nagar, Bengaluru',
+      fullAddress: 'L.B. Shastri Nagar Main Rd, Vimanapura, Bengaluru, Karnataka 560017',
+      latitude: 12.9645,
+      longitude: 77.6625,
+      isDefault: false,
+    },
+    {
+      id: 'addr-4',
+      type: 'Other',
+      shortName: 'Basvanagar, Bengaluru',
+      fullAddress: 'Basavanagar Main Rd, Marathahalli Post, Bengaluru, Karnataka 560037',
+      latitude: 12.9692,
+      longitude: 77.6807,
       isDefault: false,
     },
   ],
@@ -242,8 +251,8 @@ export function hydrateAppStore() {
         } catch (e) {}
       }
 
-      const effectiveLoc = loc ? JSON.parse(loc) : 'Koramangala, Bengaluru';
-      const effectiveFull = full ? JSON.parse(full) : 'Koramangala 4th Block, Bengaluru, Karnataka 560034';
+      const effectiveLoc = loc ? JSON.parse(loc) : 'Annasandrapalya, Bengaluru';
+      const effectiveFull = full ? JSON.parse(full) : 'Annasandrapalya Main Rd, HAL Post, Bengaluru, Karnataka 560017';
       const routing = findNearestBranch(lat, lng, effectiveFull);
 
       useAppStore.setState({

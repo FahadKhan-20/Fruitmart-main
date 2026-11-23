@@ -4,6 +4,14 @@ import { computeTotals, isValidIndianPhone, MAX_QTY_PER_ITEM, normalizeIndianPho
 import { getRazorpayInstance, getRazorpayKeySecret } from '@/lib/razorpay';
 
 export const COD_PENDING = 'Pending (Cash on Delivery)';
+// Pay on delivery (cash or UPI to the rider at the door).
+export const DOORSTEP_PENDING = 'Pending (Pay at Doorstep)';
+// What a rider (or the shop) may record when money is collected at the door.
+export const DOORSTEP_PAID_STATUSES = [
+  'Paid (Cash Collected by Rider)',
+  'Paid (UPI Collected by Rider)',
+  'Paid (Handover Cash/UPI)',
+];
 
 export class OrderInputError extends Error {
   status: number;
@@ -134,6 +142,23 @@ export function isAdminRequest(req: Request) {
   const header = req.headers.get('authorization') || '';
   const given = header.startsWith('Bearer ') ? header.slice(7) : '';
   return given.length > 0 && safeEqual(given, token);
+}
+
+// Delivery partners send `Authorization: Bearer <RIDER_ACCESS_CODE>`. They may only move
+// orders through delivery and record money collected at the door. With no code configured
+// (or one shorter than 6 characters), rider access is closed.
+export function isRiderRequest(req: Request) {
+  const code = process.env.RIDER_ACCESS_CODE || '';
+  if (code.length < 6) return false;
+  const header = req.headers.get('authorization') || '';
+  const given = header.startsWith('Bearer ') ? header.slice(7) : '';
+  return given.length > 0 && safeEqual(given, code);
+}
+
+export function staffRole(req: Request): 'admin' | 'rider' | null {
+  if (isAdminRequest(req)) return 'admin';
+  if (isRiderRequest(req)) return 'rider';
+  return null;
 }
 
 export async function readJson(req: Request) {

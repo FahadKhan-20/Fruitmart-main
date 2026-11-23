@@ -3,9 +3,9 @@ import { supabase } from '@/lib/supabase';
 import { findNearestBranch } from '@/lib/branches';
 import { AWAITING_PAYMENT, PAID, uniqueUpiAmount, upiMode } from '@/lib/upiQr';
 import {
-  COD_PENDING,
+  DOORSTEP_PENDING,
   OrderInputError,
-  isAdminRequest,
+  staffRole,
   newOrderId,
   parseCustomer,
   priceCart,
@@ -13,9 +13,11 @@ import {
   verifyRazorpayCheckout,
 } from '@/lib/orders';
 
-// Shop-manager only: lists every order with customer details.
+// Staff only (shop manager or delivery partner): lists orders with customer details.
+// Riders get only active and delivered orders, never payment secrets.
 export async function GET(req: Request) {
-  if (!isAdminRequest(req)) {
+  const role = staffRole(req);
+  if (!role) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
@@ -29,7 +31,14 @@ export async function GET(req: Request) {
 
     const { data, error } = await query;
     if (error) throw error;
-    return NextResponse.json(data || []);
+    let rows = data || [];
+    if (role === 'rider') {
+      rows = rows
+        .filter((o: any) => o.status !== 'cancelled')
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        .map(({ razorpay_signature, razorpay_payment_id, razorpay_order_id, stripe_payment_id, ...o }: any) => o);
+    }
+    return NextResponse.json(rows);
   } catch (error: any) {
     console.error('Error fetching orders:', error);
     return NextResponse.json({ error: 'Could not load orders' }, { status: 500 });
@@ -37,7 +46,8 @@ export async function GET(req: Request) {
 }
 
 // Customer checkout. The server prices the cart and decides the payment status:
-//   payment: 'cod'      -> Pending (Cash on Delivery)
+//   payment: 'cod' | 'upi_doorstep' -> Pending (Pay at Doorstep); the rider collects
+//                                      cash or UPI at the door and records it
 //   payment: 'upi_qr'   -> Awaiting Payment (confirmed later by /api/payments/upi-qr)
 //   payment: 'razorpay' -> Paid, only after the Razorpay signature and amount check
 export async function POST(req: Request) {
@@ -55,8 +65,11 @@ export async function POST(req: Request) {
     let razorpaySignature: string | null = null;
 
     if (payment === 'cod') {
-      paymentMethod = 'Cash on Delivery';
-      paymentStatus = COD_PENDING;
+      paymentMethod = 'Cash on Delivery (Pay to Rider)';
+      paymentStatus = DOORSTEP_PENDING;
+    } else if (payment === 'upi_doorstep') {
+      paymentMethod = 'UPI QR on Delivery (Pay to Rider)';
+      paymentStatus = DOORSTEP_PENDING;
     } else if (payment === 'upi_qr') {
       if (upiMode() === 'direct') {
         paymentMethod = 'UPI QR (Direct)';

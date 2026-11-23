@@ -71,6 +71,8 @@ export default function Admin() {
   const [selectedBranchFilter, setSelectedBranchFilter] = useState('all');
   const [updatingOrderId, setUpdatingOrderId] = useState(null);
 
+  // ===================== QR PAYMENTS & SOUNDBOX STATE =====================
+
   // ===================== INVENTORY STATE =====================
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
@@ -157,7 +159,7 @@ export default function Admin() {
     fetchOrders();
   };
 
-  // Initial load & Polling for orders
+  // Initial load & Polling for orders and QR payments
   useEffect(() => {
     try {
       adminTokenRef.current = sessionStorage.getItem('mdfresh_admin_token') || '';
@@ -166,10 +168,10 @@ export default function Admin() {
     fetchProducts();
     fetchGatewayData();
 
-    // Auto-refresh orders every 4 seconds for instant delivery dispatch
+    // Auto-refresh orders and QR payments every 3.5 seconds
     const interval = setInterval(() => {
       fetchOrders();
-    }, 4000);
+    }, 3500);
 
     return () => {
       clearInterval(interval);
@@ -456,75 +458,128 @@ export default function Admin() {
   });
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50/60 via-slate-50 to-emerald-50/40 p-4 md:p-8 flex flex-col items-center">
+    <div className="min-h-screen bg-gradient-to-br from-green-50 via-orange-50 to-amber-50/50 flex flex-col font-sans">
       
-      {/* Top Header */}
-      <div className="max-w-5xl w-full flex items-center justify-between mb-6">
-        <Link 
-          href="/" 
-          className="inline-flex items-center gap-2 text-sm font-bold text-green-700 bg-white/80 hover:bg-white px-4 py-2 rounded-xl shadow-sm border border-green-100 transition"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to Storefront
-        </Link>
+      {/* Top MD FRESH Admin Header */}
+      <header className="sticky top-0 z-40 bg-white border-b border-gray-100 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07)] mb-6">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6">
+          <div className="flex items-center justify-between h-20 gap-3">
+            <div className="flex items-center gap-3">
+              <Link href="/" className="flex items-center gap-2 group">
+                <Image 
+                  src="/images/logo.png" 
+                  alt="MD FRESH Logo" 
+                  width={52} 
+                  height={52} 
+                  className="object-contain" 
+                  priority
+                />
+                <div className="text-2xl font-black tracking-tight text-transparent bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text">
+                  MD FRESH
+                </div>
+              </Link>
+              <div className="hidden h-9 w-px bg-gray-200 sm:block"></div>
+              <div className="hidden sm:flex flex-col">
+                <span className="text-[10px] font-black uppercase text-green-700 tracking-wider flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-green-600 animate-pulse" />
+                  Store Manager Dashboard
+                </span>
+                <span className="text-xs font-semibold text-gray-600">
+                  4 Dark Store Hubs Active
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 sm:gap-3">
+              <Link
+                href="/rider"
+                className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-black text-amber-900 bg-amber-50 hover:bg-amber-100 rounded-xl border border-amber-200 transition shadow-xs"
+              >
+                <Bike className="w-4 h-4 text-amber-600" />
+                <span>Rider App</span>
+              </Link>
+              <Link
+                href="/"
+                className="flex items-center gap-1.5 px-4 py-2 text-xs font-black text-white bg-green-600 hover:bg-green-700 rounded-xl shadow-xs transition"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Storefront</span>
+              </Link>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Admin Content Container */}
+      <div className="max-w-6xl w-full mx-auto px-4 pb-12 flex flex-col items-center">
         
         {/* Navigation Tabs (Orders vs Inventory vs Branches vs Gateway) */}
-        <div className="flex flex-wrap items-center gap-2 bg-white/90 p-1.5 rounded-2xl shadow-sm border border-gray-200">
-          <button
-            onClick={() => setActiveTab('orders')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
-              activeTab === 'orders'
-                ? 'bg-green-600 text-white shadow-sm'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-            }`}
-          >
-            <Bell className="w-4 h-4" />
-            <span>Store Orders</span>
-            {pendingOrdersCount > 0 && (
-              <span className="w-5 h-5 rounded-full bg-red-500 text-white text-[10px] flex items-center justify-center animate-pulse">
-                {pendingOrdersCount}
-              </span>
-            )}
-          </button>
+        <div className="max-w-5xl w-full flex flex-wrap items-center justify-between gap-3 mb-6 bg-white/90 p-2 rounded-2xl shadow-sm border border-gray-100">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setActiveTab('orders')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                activeTab === 'orders'
+                  ? 'bg-green-600 text-white shadow-sm'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+              }`}
+            >
+              <Bell className="w-4 h-4" />
+              <span>Store Orders</span>
+              {pendingOrdersCount > 0 && (
+                <span className="w-5 h-5 rounded-full bg-red-500 text-white text-[10px] flex items-center justify-center animate-pulse">
+                  {pendingOrdersCount}
+                </span>
+              )}
+            </button>
 
-          <button
-            onClick={() => setActiveTab('inventory')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
-              activeTab === 'inventory'
-                ? 'bg-green-600 text-white shadow-sm'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-            }`}
-          >
-            <ShoppingBag className="w-4 h-4" />
-            <span>Product Inventory ({products.length})</span>
-          </button>
+            <button
+              onClick={() => setActiveTab('inventory')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                activeTab === 'inventory'
+                  ? 'bg-green-600 text-white shadow-sm'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+              }`}
+            >
+              <ShoppingBag className="w-4 h-4" />
+              <span>Product Inventory ({products.length})</span>
+            </button>
 
-          <button
-            onClick={() => setActiveTab('branches')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
-              activeTab === 'branches'
-                ? 'bg-green-600 text-white shadow-sm'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-            }`}
-          >
-            <Store className="w-4 h-4" />
-            <span>Shop Branches ({SHOP_BRANCHES.length})</span>
-          </button>
+            <button
+              onClick={() => setActiveTab('branches')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                activeTab === 'branches'
+                  ? 'bg-green-600 text-white shadow-sm'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+              }`}
+            >
+              <Store className="w-4 h-4" />
+              <span>Shop Branches ({SHOP_BRANCHES.length})</span>
+            </button>
 
-          <button
-            onClick={() => setActiveTab('gateway')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
-              activeTab === 'gateway'
-                ? 'bg-green-600 text-white shadow-sm'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-            }`}
+            <button
+              onClick={() => setActiveTab('gateway')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                activeTab === 'gateway'
+                  ? 'bg-green-600 text-white shadow-sm'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+              }`}
+            >
+              <ShieldCheck className="w-4 h-4" />
+              <span>Payments</span>
+              <span className={`w-2 h-2 rounded-full ${gatewayData.configured ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            </button>
+          </div>
+
+          <Link
+            href="/rider"
+            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition"
           >
-            <ShieldCheck className="w-4 h-4" />
-            <span>Razorpay & Payments</span>
-            <span className={`w-2 h-2 rounded-full ${gatewayData.configured ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-          </button>
+            <Bike className="w-3.5 h-3.5 text-amber-600" />
+            <span>Open Rider App</span>
+            <ExternalLink className="w-3 h-3 text-amber-600" />
+          </Link>
         </div>
-      </div>
 
       {/* ====================================================================== */}
       {/* TAB 1: SHOP MANAGER ORDERS RECEIVING & DISPATCH DASHBOARD */}
@@ -604,6 +659,7 @@ export default function Admin() {
               </div>
             </div>
           </div>
+
 
           {/* Filter Bar */}
           <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-wrap items-center justify-between gap-3">
@@ -737,7 +793,7 @@ export default function Admin() {
                           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md text-[11px] font-bold">
                               <Store className="w-3 h-3 text-emerald-600" />
-                              <span>Hub: <strong>{ord.assigned_branch_name || 'Indiranagar Hub'}</strong></span>
+                              <span>Hub: <strong>{ord.assigned_branch_name || 'Annasandrapalya Branch'}</strong></span>
                               {ord.branch_distance_km != null && (
                                 <span className="bg-white px-1.5 py-0.2 rounded text-[10px] font-black border border-emerald-200 ml-1">
                                   {ord.branch_distance_km} km
@@ -1584,6 +1640,7 @@ RAZORPAY_WEBHOOK_SECRET=...`}</pre>
           </div>
         </div>
       )}
+      </div>
 
       {/* LIVE CAMERA MODAL */}
       {showLiveCamera && (

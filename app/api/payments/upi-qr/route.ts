@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import QRCode from 'qrcode';
+import { DOORSTEP_PENDING, staffRole } from '@/lib/orders';
 import { supabase } from '@/lib/supabase';
 import { getRazorpayInstance, isRazorpayConfigured } from '@/lib/razorpay';
 import {
@@ -15,6 +16,7 @@ import {
 } from '@/lib/upiQr';
 
 // POST { orderId } -> a new QR for this order only (its own amount and order reference).
+//   pay on delivery: QR the rider shows at the door (staff token required).
 //   direct mode:   QR for the shop's own UPI ID; the shop confirms payment in admin.
 //   razorpay mode: single-use, fixed-amount Razorpay QR, confirmed automatically.
 export async function POST(req: Request) {
@@ -32,6 +34,22 @@ export async function POST(req: Request) {
     if (order.payment_status === PAID) {
       return NextResponse.json({ error: 'Order is already paid' }, { status: 409 });
     }
+
+    // Pay on delivery: the rider shows this QR at the door (staff only).
+    if (order.payment_status === DOORSTEP_PENDING) {
+      if (!staffRole(req)) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+      const shop = getShopUpi();
+      if (!shop) {
+        return NextResponse.json({ error: 'Shop UPI ID is not configured' }, { status: 503 });
+      }
+      const amount = Math.round(Number(order.total_amount) * 100) / 100;
+      const upiIntent = buildUpiIntent(shop.vpa, shop.name, amount, orderId);
+      const imageUrl = await QRCode.toDataURL(upiIntent, { width: 320, margin: 1, errorCorrectionLevel: 'M' });
+      return NextResponse.json({ success: true, mode: 'doorstep', imageUrl, upiIntent, payee: shop.name, amount });
+    }
+
     if (order.payment_status !== AWAITING_PAYMENT) {
       return NextResponse.json({ error: 'This order is not waiting for a UPI payment' }, { status: 409 });
     }

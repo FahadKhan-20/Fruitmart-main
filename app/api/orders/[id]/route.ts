@@ -1,9 +1,19 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { isAdminRequest, readJson, OrderInputError } from '@/lib/orders';
+import {
+  DOORSTEP_PAID_STATUSES,
+  DOORSTEP_PENDING,
+  OrderInputError,
+  readJson,
+  staffRole,
+} from '@/lib/orders';
 import { AWAITING_PAYMENT, PAID, PAYMENT_NOT_RECEIVED, PAYMENT_TO_VERIFY } from '@/lib/upiQr';
 
-const ORDER_STATUSES = ['received', 'approved', 'preparing', 'dispatched', 'delivered', 'cancelled'];
+const ORDER_STATUSES = ['received', 'approved', 'preparing', 'dispatched', 'arrived', 'delivered', 'cancelled'];
+// Riders only handle the delivery leg.
+const RIDER_STATUSES = ['dispatched', 'arrived', 'delivered'];
+const FULFILMENT_STATUSES = ['approved', 'preparing', 'dispatched', 'arrived', 'delivered'];
+const PREPAID_UPI_PENDING = [AWAITING_PAYMENT, PAYMENT_TO_VERIFY, PAYMENT_NOT_RECEIVED];
 
 // Public order tracker. Order IDs are random, so the ID works as the access key.
 // Payment secrets are never returned.
@@ -35,30 +45,22 @@ export async function GET(
   }
 }
 
-// Shop-manager only: move an order through its delivery stages.
-// payment_status can only go from a pending UPI state to "Paid" or "Payment not received"
-// (the shop checked its UPI app). Razorpay payments are confirmed automatically.
+// Staff only (shop manager or delivery partner).
+//   Shop manager: any delivery status; confirms prepaid UPI ("Paid" / "Payment not received");
+//                 records doorstep collection.
+//   Rider:        dispatched / arrived / delivered, rider details, doorstep collection.
+// Nobody can mark an order Paid unless it is waiting for that kind of payment.
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  if (!isAdminRequest(req)) {
+  const role = staffRole(req);
+  if (!role) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
     const { id } = await params;
     const body = await readJson(req);
-
-    const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() };
-    if (body.status !== undefined) {
-      if (!ORDER_STATUSES.includes(body.status)) {
-        return NextResponse.json({ error: 'Invalid status' }, { status: 400 });
-      }
-      updateData.status = body.status;
-    }
-    if (body.assigned_branch_id) updateData.assigned_branch_id = String(body.assigned_branch_id);
-    if (body.assigned_branch_name) updateData.assigned_branch_name = String(body.assigned_branch_name);
-    if (body.branch_distance_km !== undefined) updateData.branch_distance_km = Number(body.branch_distance_km);
 
     const { data: existing, error: findError } = await supabase.from('orders').select('*').eq('id', id);
     if (findError) throw findError;
@@ -66,29 +68,68 @@ export async function PATCH(
       return NextResponse.json({ error: 'Order not found' }, { status: 404 });
     }
     const current = existing[0];
-    const pendingUpi = [AWAITING_PAYMENT, PAYMENT_TO_VERIFY];
+    const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() };
 
-    let nextPaymentStatus = current.payment_status;
-    if (body.payment_status !== undefined) {
-      if (![PAID, PAYMENT_NOT_RECEIVED].includes(body.payment_status)) {
-        return NextResponse.json({ error: 'Invalid payment status' }, { status: 400 });
+    if (body.status !== undefined) {
+      const allowed = role === 'admin' ? ORDER_STATUSES : RIDER_STATUSES;
+      if (!allowed.includes(body.status)) {
+        return NextResponse.json({ error: 'Invalid status' }, { status: 400 });
       }
-      if (!pendingUpi.includes(current.payment_status) && current.payment_status !== PAYMENT_NOT_RECEIVED) {
-        return NextResponse.json({ error: `Payment is already "${current.payment_status}"` }, { status: 409 });
+      if (current.status === 'cancelled' || (current.status === 'delivered' && body.status !== 'delivered')) {
+        return NextResponse.json({ error: `Order is already ${current.status}` }, { status: 409 });
       }
-      nextPaymentStatus = body.payment_status;
-      updateData.payment_status = nextPaymentStatus;
+      updateData.status = body.status;
+      if (body.status === 'arrived') updateData.arrival_time = new Date().toISOString();
     }
 
-    // Do not pack or send an order whose UPI payment the shop has not seen.
-    const fulfilment = ['approved', 'preparing', 'dispatched', 'delivered'];
+    if (role === 'admin') {
+      if (body.assigned_branch_id) updateData.assigned_branch_id = String(body.assigned_branch_id);
+      if (body.assigned_branch_name) updateData.assigned_branch_name = String(body.assigned_branch_name);
+      if (body.branch_distance_km !== undefined) updateData.branch_distance_km = Number(body.branch_distance_km);
+    }
+    if (body.rider_name) updateData.rider_name = String(body.rider_name).slice(0, 80);
+    if (body.rider_phone) updateData.rider_phone = String(body.rider_phone).replace(/[^\d+ ]/g, '').slice(0, 16);
+
+    let nextPaymentStatus: string = current.payment_status;
+    if (body.payment_status !== undefined) {
+      const wanted = String(body.payment_status);
+      if (current.payment_status === DOORSTEP_PENDING && DOORSTEP_PAID_STATUSES.includes(wanted)) {
+        // Money collected at the door.
+        updateData.payment_collected_by = String(body.payment_collected_by || body.rider_name || role).slice(0, 80);
+      } else if (
+        role === 'admin' &&
+        PREPAID_UPI_PENDING.includes(current.payment_status) &&
+        [PAID, PAYMENT_NOT_RECEIVED].includes(wanted)
+      ) {
+        // Shop checked its UPI app for a prepaid order.
+      } else if (wanted === current.payment_status) {
+        // No change (e.g. rider re-sends the status it already has).
+      } else {
+        return NextResponse.json(
+          { error: `Cannot change payment from "${current.payment_status}" to "${wanted}"` },
+          { status: 409 }
+        );
+      }
+      nextPaymentStatus = wanted;
+      updateData.payment_status = wanted;
+    }
+
+    // Do not pack or send a prepaid UPI order whose payment the shop has not seen.
     if (
       updateData.status &&
-      fulfilment.includes(updateData.status as string) &&
-      (pendingUpi.includes(nextPaymentStatus) || nextPaymentStatus === PAYMENT_NOT_RECEIVED)
+      FULFILMENT_STATUSES.includes(updateData.status as string) &&
+      PREPAID_UPI_PENDING.includes(nextPaymentStatus)
     ) {
       return NextResponse.json(
         { error: 'Confirm the UPI payment (Mark as paid) before approving this order' },
+        { status: 409 }
+      );
+    }
+
+    // A doorstep order cannot be closed as delivered while its money is still uncollected.
+    if (updateData.status === 'delivered' && nextPaymentStatus === DOORSTEP_PENDING) {
+      return NextResponse.json(
+        { error: 'Record the cash or UPI collected at the door before marking delivered' },
         { status: 409 }
       );
     }

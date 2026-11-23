@@ -7,13 +7,10 @@ import { useCartStore } from '@/store/cartStore';
 import { useAppStore } from '@/store/useAppStore';
 import { 
   MapPin, 
-  CreditCard, 
   ChevronLeft, 
   ShieldCheck, 
   Smartphone, 
   QrCode, 
-  Wallet, 
-  Building2, 
   Banknote, 
   Check, 
   Sparkles, 
@@ -24,7 +21,6 @@ import {
   Store
 } from 'lucide-react';
 import Navbar from '@/components/Navbar';
-import { loadRazorpayScript } from '@/lib/razorpayClient';
 import { findNearestBranch } from '@/lib/branches';
 import {
   computeTotals,
@@ -33,7 +29,7 @@ import {
   normalizeIndianPhone,
 } from '@/lib/pricing';
 
-type PaymentTab = 'upi' | 'card' | 'cod' | 'wallet' | 'netbanking';
+type PaymentTab = 'upi' | 'upi_doorstep' | 'cod';
 type UpiModal = 'none' | 'phonepe' | 'gpay' | 'paytm' | 'bhim' | 'upi_qr';
 
 // Payment tab content slides in from the side of the tab that was picked.
@@ -54,11 +50,9 @@ const tabContentVariants = {
 };
 
 const PAYMENT_TABS: { id: PaymentTab; label: string; icon: typeof Smartphone }[] = [
-  { id: 'upi', label: 'UPI Apps', icon: Smartphone },
-  { id: 'card', label: 'Cards', icon: CreditCard },
-  { id: 'cod', label: 'Cash on Del.', icon: Banknote },
-  { id: 'wallet', label: 'Wallets', icon: Wallet },
-  { id: 'netbanking', label: 'NetBank', icon: Building2 },
+  { id: 'upi', label: 'Pay now (UPI)', icon: Smartphone },
+  { id: 'upi_doorstep', label: 'UPI on delivery', icon: QrCode },
+  { id: 'cod', label: 'Cash on delivery', icon: Banknote },
 ];
 
 // Order of the server's response to POST /api/orders.
@@ -108,17 +102,13 @@ export default function CheckoutPage() {
   const [selectedUpiApp, setSelectedUpiApp] = useState<'phonepe' | 'gpay' | 'paytm' | 'bhim' | 'custom'>('phonepe');
 
   // Selected Bank & Wallet
-  const [selectedBank, setSelectedBank] = useState('HDFC Bank');
-  const [selectedWallet, setSelectedWallet] = useState('PhonePe Wallet');
 
   // Delivery instructions
   const [deliveryNote, setDeliveryNote] = useState<string[]>(['Leave at door']);
 
   // Gateway & Razorpay state
-  const [isProcessing, setIsProcessing] = useState(false);
   const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
   const [paymentError, setPaymentError] = useState('');
-  const [gatewayConfigured, setGatewayConfigured] = useState(true);
 
   // UPI modal (QR + app links). The value is the app the customer picked.
   const [showDirectAppModal, setShowDirectAppModal] = useState<UpiModal>('none');
@@ -148,34 +138,6 @@ export default function CheckoutPage() {
   const phoneValid = isValidIndianPhone(customerPhone);
   const flatValid = houseFlatNo.trim().length > 0;
 
-  // Suppress third-party script alerts (like Razorpay checkout.js error alerts)
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const origAlert = window.alert;
-    window.alert = (msg: any) => {
-      const str = String(msg || '');
-      if (str.includes('Payment Failed') || str.includes('Oops') || str.includes('MetaMask')) {
-        console.warn('Silenced third-party script alert:', str);
-        return;
-      }
-      origAlert(msg);
-    };
-    return () => {
-      window.alert = origAlert;
-    };
-  }, []);
-
-  // Gateway status decides whether online methods are offered at all.
-  useEffect(() => {
-    fetch('/api/razorpay/keys')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data) setGatewayConfigured(Boolean(data.configured));
-      })
-      .catch(() => {});
-    loadRazorpayScript(); // Pre-load Razorpay checkout SDK
-  }, []);
-
   useEffect(() => {
     if (user?.name && !customerName) setCustomerName(user.name);
     if (user?.phone && !customerPhone) setCustomerPhone(normalizeIndianPhone(user.phone));
@@ -201,7 +163,7 @@ export default function CheckoutPage() {
   const cartLines = () => items.map((i) => ({ id: i.product.id, quantity: i.quantity }));
 
   // Create the order on the server. The server prices the cart and sets the payment status.
-  const placeOrder = async (payment: 'cod' | 'upi_qr' | 'razorpay', extra: Record<string, string> = {}) => {
+  const placeOrder = async (payment: 'cod' | 'upi_doorstep' | 'upi_qr', extra: Record<string, string> = {}) => {
     const res = await fetch('/api/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -252,11 +214,11 @@ export default function CheckoutPage() {
       return;
     }
 
-    // 1. Cash on Delivery
-    if (activePaymentTab === 'cod') {
+    // 1. Pay on delivery (cash or UPI to the rider at the door)
+    if (activePaymentTab === 'cod' || activePaymentTab === 'upi_doorstep') {
       setIsVerifyingPayment(true);
       try {
-        completeOrderLocally(await placeOrder('cod'));
+        completeOrderLocally(await placeOrder(activePaymentTab));
       } catch (err: any) {
         setPaymentError(err.message);
         setIsVerifyingPayment(false);
@@ -264,90 +226,8 @@ export default function CheckoutPage() {
       return;
     }
 
-    // 2. UPI: per-order dynamic QR, confirmed by the server.
-    if (activePaymentTab === 'upi') {
-      setShowDirectAppModal(selectedUpiApp === 'custom' ? 'upi_qr' : selectedUpiApp);
-      return;
-    }
-
-    // 3. Cards / NetBanking / Wallets: Razorpay Standard Checkout.
-    const unavailable = 'Card, NetBanking and Wallet payments are unavailable right now. Please pay by UPI QR or Cash on Delivery.';
-    if (!gatewayConfigured) {
-      setPaymentError(unavailable);
-      return;
-    }
-
-    setIsProcessing(true);
-    try {
-      const createOrderRes = await fetch('/api/razorpay/create-order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: cartLines() }),
-      });
-      const orderData = await createOrderRes.json().catch(() => ({}));
-      if (!createOrderRes.ok || !orderData.success) {
-        throw new Error(createOrderRes.status >= 500 ? unavailable : orderData.error || unavailable);
-      }
-
-      // The SDK load can hang when the network blocks it; give up after 8 s.
-      await Promise.race([loadRazorpayScript(), new Promise((r) => setTimeout(r, 8000))]);
-      const RazorpayCtor = (window as any).Razorpay;
-      if (!RazorpayCtor) throw new Error(unavailable);
-
-      const methodLabel =
-        activePaymentTab === 'card' ? 'Cards' :
-        activePaymentTab === 'netbanking' ? `NetBanking - ${selectedBank}` :
-        `Wallet - ${selectedWallet}`;
-
-      const rzp = new RazorpayCtor({
-        key: orderData.keyId,
-        amount: orderData.amount, // in paise, set by the server
-        currency: orderData.currency || 'INR',
-        name: 'MD FRESH Grocery',
-        description: `10-Minute Delivery - ${itemCount} Fresh Items`,
-        order_id: orderData.orderId,
-        prefill: {
-          name: customerName || 'Valued Customer',
-          email: user?.email || undefined,
-          contact: `+91${customerPhone}`,
-          method: activePaymentTab,
-        },
-        notes: {
-          address: `${houseFlatNo}, ${fullAddress || location || 'Bengaluru'}`.slice(0, 250),
-          notes: deliveryNote.join(', '),
-        },
-        theme: { color: '#16a34a' },
-        modal: {
-          ondismiss: () => setIsProcessing(false),
-        },
-        handler: async (response: any) => {
-          setIsVerifyingPayment(true);
-          try {
-            const order = await placeOrder('razorpay', {
-              razorpay_order_id: response.razorpay_order_id,
-              razorpay_payment_id: response.razorpay_payment_id,
-              razorpay_signature: response.razorpay_signature,
-              method_label: methodLabel,
-            });
-            completeOrderLocally(order);
-          } catch (err: any) {
-            setPaymentError(
-              `${err.message}. If money was debited, it will be refunded automatically. Payment ID: ${response.razorpay_payment_id}`
-            );
-            setIsVerifyingPayment(false);
-            setIsProcessing(false);
-          }
-        },
-      });
-      rzp.on('payment.failed', (resp: any) => {
-        setPaymentError(resp?.error?.description || 'Payment failed. Please try again or pick another method.');
-        setIsProcessing(false);
-      });
-      rzp.open();
-    } catch (err: any) {
-      setPaymentError(err.message || unavailable);
-      setIsProcessing(false);
-    }
+    // 2. Pay now: UPI QR made for this order.
+    setShowDirectAppModal(selectedUpiApp === 'custom' ? 'upi_qr' : selectedUpiApp);
   };
 
   // Create (or reuse) the unpaid order, then a new single-use QR for it.
@@ -514,7 +394,7 @@ export default function CheckoutPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50/40 via-gray-50 to-amber-50/30 flex flex-col">
+    <div className="min-h-screen bg-gradient-to-br from-green-50 via-orange-50 to-amber-50/50 flex flex-col font-sans">
       <Navbar />
       
       <main className="flex-1 container max-w-5xl mx-auto px-4 py-8">
@@ -746,21 +626,20 @@ export default function CheckoutPage() {
             <section className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="text-lg font-black text-gray-900">Select Payment App / Method</h2>
-                  <p className="text-xs text-gray-500">Official Razorpay Gateway • Direct App Redirection & Dynamic QR</p>
+                  <h2 className="text-lg font-black text-gray-900">How would you like to pay?</h2>
+                  <p className="text-xs text-gray-500">Pay now by UPI, or pay the delivery partner at your door</p>
                 </div>
                 <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-800 bg-emerald-50 px-3 py-1 rounded-xl border border-emerald-200">
                   <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                  <span>Razorpay Official</span>
+                  <span>Secure UPI</span>
                 </div>
               </div>
 
               {/* Payment Tab Navigation */}
-              <div role="tablist" aria-label="Payment method" className="grid grid-cols-5 gap-1 p-1 bg-gray-100/80 rounded-2xl mb-6">
+              <div role="tablist" aria-label="Payment method" className="grid grid-cols-3 gap-1 p-1 bg-gray-100/80 rounded-2xl mb-6">
                 {PAYMENT_TABS.map((tab) => {
                   const Icon = tab.icon;
                   const isActive = activePaymentTab === tab.id;
-                  const isOnline = tab.id === 'card' || tab.id === 'wallet' || tab.id === 'netbanking';
                   return (
                     <button
                       key={tab.id}
@@ -785,10 +664,7 @@ export default function CheckoutPage() {
                         transition={{ type: 'spring', stiffness: 420, damping: 30 }}
                       >
                         <Icon className={`w-4 h-4 mb-1 transition-colors duration-200 ${isActive ? 'text-green-600' : 'text-gray-400'}`} />
-                        <span className="truncate max-w-full text-[10px]">{tab.label}</span>
-                        {isOnline && !gatewayConfigured && (
-                          <span className="text-[8px] font-bold text-amber-600 leading-none mt-0.5">Unavailable</span>
-                        )}
+                        <span className="max-w-full text-[10px] leading-tight text-center">{tab.label}</span>
                       </motion.span>
                     </button>
                   );
@@ -934,22 +810,15 @@ export default function CheckoutPage() {
                 </div>
               )}
 
-              {/* TAB 2: CREDIT / DEBIT CARDS */}
-              {activePaymentTab === 'card' && (
-                <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <CreditCard className="w-5 h-5 text-green-600" />
-                      <span className="text-sm font-black text-gray-900">Credit / Debit Card Checkout</span>
-                    </div>
-                    <div className="flex items-center gap-1 text-[10px] font-bold">
-                      <span className="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-black">VISA</span>
-                      <span className="bg-red-100 text-red-800 px-1.5 py-0.5 rounded font-black">Mastercard</span>
-                      <span className="bg-green-100 text-green-800 px-1.5 py-0.5 rounded font-black">RuPay</span>
-                    </div>
+              {/* TAB 2: UPI ON DELIVERY */}
+              {activePaymentTab === 'upi_doorstep' && (
+                <div className="p-4 bg-emerald-50/70 border border-emerald-200 rounded-2xl space-y-2">
+                  <div className="flex items-center gap-2">
+                    <QrCode className="w-5 h-5 text-emerald-700" />
+                    <h3 className="text-sm font-black text-emerald-950">UPI QR on Delivery</h3>
                   </div>
-                  <p className="text-xs text-gray-600 leading-relaxed">
-                    Click <strong>Pay with Card</strong> to enter card details with instant 3D-Secure 2.0 authorization.
+                  <p className="text-xs text-emerald-800 leading-relaxed font-medium">
+                    Nothing to pay now. When your order arrives, the delivery partner shows a UPI QR for exactly ₹{finalTotal}. Scan it with PhonePe, Google Pay or any UPI app.
                   </p>
                 </div>
               )}
@@ -959,62 +828,11 @@ export default function CheckoutPage() {
                 <div className="p-4 bg-emerald-50/70 border border-emerald-200 rounded-2xl space-y-2">
                   <div className="flex items-center gap-2">
                     <Banknote className="w-5 h-5 text-emerald-700" />
-                    <h3 className="text-sm font-black text-emerald-950">Cash or UPI on Delivery (Doorstep)</h3>
+                    <h3 className="text-sm font-black text-emerald-950">Cash on Delivery</h3>
                   </div>
                   <p className="text-xs text-emerald-800 leading-relaxed font-medium">
-                    Instant 1-click order placement! Keep ₹{finalTotal} handy or simply scan our delivery partner’s live QR code on arrival.
+                    Nothing to pay now. Keep ₹{finalTotal} ready for the delivery partner.
                   </p>
-                </div>
-              )}
-
-              {/* TAB 4: WALLETS */}
-              {activePaymentTab === 'wallet' && (
-                <div className="space-y-3">
-                  <p className="text-xs text-gray-500 font-semibold mb-2">Select wallet:</p>
-                  {['PhonePe Wallet', 'Paytm Wallet', 'Amazon Pay', 'Mobikwik', 'Airtel Money'].map((wallet) => (
-                    <button
-                      type="button"
-                      key={wallet}
-                      onClick={() => setSelectedWallet(wallet)}
-                      className={`w-full p-3.5 rounded-2xl border flex items-center justify-between transition cursor-pointer ${
-                        selectedWallet === wallet
-                          ? 'border-green-600 bg-green-50/50 shadow-xs'
-                          : 'border-gray-200 hover:border-gray-300 bg-white'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <Wallet className="w-4 h-4 text-green-700" />
-                        <span className="text-xs font-bold text-gray-900">{wallet}</span>
-                      </div>
-                      <span className="text-xs font-black text-green-700">
-                        {selectedWallet === wallet ? <Check className="w-4 h-4" /> : 'Select →'}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {/* TAB 5: NET BANKING */}
-              {activePaymentTab === 'netbanking' && (
-                <div className="space-y-3">
-                  <p className="text-xs text-gray-500 font-semibold mb-2">Select your bank portal:</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {['HDFC Bank', 'ICICI Bank', 'State Bank of India', 'Axis Bank', 'Kotak Mahindra', 'Punjab National Bank'].map((bank) => (
-                      <button
-                        type="button"
-                        key={bank}
-                        onClick={() => setSelectedBank(bank)}
-                        className={`p-3 rounded-xl border text-xs font-bold flex items-center gap-2 text-left transition cursor-pointer ${
-                          selectedBank === bank
-                            ? 'border-green-600 bg-green-50/50 text-green-950 shadow-xs'
-                            : 'border-gray-200 bg-white hover:border-gray-300 text-gray-900'
-                        }`}
-                      >
-                        <Building2 className="w-3.5 h-3.5 text-gray-500" />
-                        <span className="truncate">{bank}</span>
-                      </button>
-                    ))}
-                  </div>
                 </div>
               )}
               </motion.div>
@@ -1070,26 +888,25 @@ export default function CheckoutPage() {
               {/* Pay / Place Order Button */}
               <button
                 type="button"
-                disabled={isProcessing || isVerifyingPayment}
+                disabled={isVerifyingPayment}
                 onClick={handleInitiatePayment}
                 className="w-full py-4 px-6 rounded-2xl font-black text-base text-gray-950 bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 hover:from-amber-500 hover:to-yellow-500 transition-all shadow-lg hover:shadow-xl active:scale-[0.98] flex items-center justify-between cursor-pointer disabled:opacity-50"
               >
                 <div className="flex flex-col text-left leading-tight">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-gray-800">
                     {activePaymentTab === 'upi' ? `Pay via ${selectedUpiApp === 'gpay' ? 'Google Pay' : selectedUpiApp === 'bhim' ? 'BHIM UPI' : selectedUpiApp === 'phonepe' ? 'PhonePe' : selectedUpiApp === 'paytm' ? 'Paytm' : 'UPI'}` :
-                     activePaymentTab === 'card' ? 'Pay with Card' :
-                     activePaymentTab === 'cod' ? 'Cash on Delivery' : 'Proceed to Pay'}
+                     activePaymentTab === 'upi_doorstep' ? 'UPI on Delivery' : 'Cash on Delivery'}
                   </span>
                   <span className="text-lg">₹{finalTotal}</span>
                 </div>
                 <div className="flex items-center gap-1.5 font-black text-sm">
-                  {isProcessing || isVerifyingPayment ? (
+                  {isVerifyingPayment ? (
                     <>
                       <Loader2 className="w-5 h-5 animate-spin" />
-                      <span>{activePaymentTab === 'cod' ? 'Placing order...' : 'Connecting...'}</span>
+                      <span>{activePaymentTab === 'upi' ? 'Connecting...' : 'Placing order...'}</span>
                     </>
                   ) : (
-                    <span>{activePaymentTab === 'cod' ? 'Place Order →' : 'Proceed to Pay →'}</span>
+                    <span>{activePaymentTab === 'upi' ? 'Proceed to Pay →' : 'Place Order →'}</span>
                   )}
                 </div>
               </button>
