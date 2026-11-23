@@ -6,33 +6,39 @@ import { useAppStore } from '@/store/useAppStore';
 import { useCartStore } from '@/store/cartStore';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
+import { computeTotals, FREE_DELIVERY_THRESHOLD } from '@/lib/pricing';
 
 export default function CartDrawer() {
   const { isCartDrawerOpen, setCartDrawerOpen } = useAppStore();
-  const { items, updateQuantity, getTotalPrice, removeItem } = useCartStore();
+  const { items, updateQuantity, getTotalPrice } = useCartStore();
   const router = useRouter();
 
-  if (!isCartDrawerOpen) return null;
-
-  const total = getTotalPrice();
-  const deliveryFee = total > 0 ? (total > 500 ? 0 : 40) : 0;
-  const finalTotal = total + deliveryFee;
+  const { subtotal: total, deliveryFee, handlingFee, total: finalTotal } = computeTotals(getTotalPrice());
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm">
+      {isCartDrawerOpen && (
+      <motion.div
+        key="cart-drawer"
+        className="fixed inset-0 z-50 flex justify-end"
+        initial={{ opacity: 1 }}
+        exit={{ opacity: 1 }}
+      >
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
           onClick={() => setCartDrawerOpen(false)}
-          className="absolute inset-0"
+          className="absolute inset-0 bg-black/50 backdrop-blur-sm"
         />
         <motion.div
           initial={{ x: '100%' }}
           animate={{ x: 0 }}
           exit={{ x: '100%' }}
-          transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+          transition={{ type: 'spring', damping: 30, stiffness: 280 }}
+          role="dialog"
+          aria-label="Shopping cart"
           className="relative w-full max-w-md h-full bg-white shadow-2xl flex flex-col"
         >
           {/* Header */}
@@ -43,6 +49,7 @@ export default function CartDrawer() {
             </h2>
             <button
               onClick={() => setCartDrawerOpen(false)}
+              aria-label="Close cart"
               className="p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 rounded-full transition-colors"
             >
               <X className="w-5 h-5" />
@@ -65,6 +72,7 @@ export default function CartDrawer() {
               </div>
             ) : (
               <div className="space-y-4">
+                <AnimatePresence initial={false}>
                 {items.map((item) => (
                   <motion.div
                     key={item.product.id}
@@ -92,6 +100,7 @@ export default function CartDrawer() {
                         <div className="flex items-center gap-3 bg-green-50 rounded-lg p-1 border border-green-100">
                           <button
                             onClick={() => updateQuantity(item.product.id, item.quantity - 1)}
+                            aria-label={`Decrease ${item.product.name}`}
                             className="w-6 h-6 flex items-center justify-center rounded-md bg-white text-green-700 shadow-sm hover:bg-green-100 transition-colors"
                           >
                             <Minus className="w-3 h-3" />
@@ -101,6 +110,7 @@ export default function CartDrawer() {
                           </span>
                           <button
                             onClick={() => updateQuantity(item.product.id, item.quantity + 1)}
+                            aria-label={`Increase ${item.product.name}`}
                             className="w-6 h-6 flex items-center justify-center rounded-md bg-green-600 text-white shadow-sm hover:bg-green-700 transition-colors"
                           >
                             <Plus className="w-3 h-3" />
@@ -110,6 +120,7 @@ export default function CartDrawer() {
                     </div>
                   </motion.div>
                 ))}
+                </AnimatePresence>
               </div>
             )}
           </div>
@@ -130,9 +141,13 @@ export default function CartDrawer() {
                     <span className="font-medium text-gray-900">₹{deliveryFee}</span>
                   )}
                 </div>
-                {deliveryFee > 0 && total < 500 && (
+                <div className="flex justify-between text-gray-600">
+                  <span>Handling Fee</span>
+                  <span className="font-medium text-gray-900">₹{handlingFee}</span>
+                </div>
+                {deliveryFee > 0 && (
                   <p className="text-xs text-green-600 bg-green-50 p-2 rounded-lg">
-                    Add ₹{500 - total} more to get free delivery!
+                    Add ₹{FREE_DELIVERY_THRESHOLD + 1 - total} more to get free delivery!
                   </p>
                 )}
               </div>
@@ -156,7 +171,8 @@ export default function CartDrawer() {
             </div>
           )}
         </motion.div>
-      </div>
+      </motion.div>
+      )}
     </AnimatePresence>
   );
 }

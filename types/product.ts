@@ -3,7 +3,7 @@
  * Core product types for deployment
  */
 
-export type ProductCategory = 'Fruits' | 'Vegetables' | 'Leafy Vegetables' | 'Root Vegetables' | 'Daily Vegetables';
+export type ProductCategory = 'Fruits' | 'Vegetables' | 'Dairy' | 'Leafy Vegetables' | 'Root Vegetables' | 'Daily Vegetables';
 
 export type ProductUnit = 'kg' | 'piece' | 'bunch' | 'dozen' | 'litre' | 'box' | 'pc';
 

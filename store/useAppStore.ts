@@ -216,9 +216,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   setCartDrawerOpen: (isOpen) => set({ isCartDrawerOpen: isOpen }),
 }));
 
-// Hydrate stored state safely on client after initial render to eliminate SSR mismatch
-if (typeof window !== 'undefined') {
-  setTimeout(() => {
+// Load saved state from localStorage. Called once from StoreHydrator after the first
+// client render, so server HTML and the first client render match.
+let appStoreHydrated = false;
+export function hydrateAppStore() {
+  if (typeof window === 'undefined' || appStoreHydrated) return;
+  appStoreHydrated = true;
+  {
     try {
       const loc = localStorage.getItem('mdfresh_location') || localStorage.getItem('blinkit_location');
       const full = localStorage.getItem('mdfresh_full_address') || localStorage.getItem('blinkit_full_address');
@@ -245,8 +249,8 @@ if (typeof window !== 'undefined') {
       useAppStore.setState({
         location: effectiveLoc,
         fullAddress: effectiveFull,
-        latitude: lat || 12.9352,
-        longitude: lng || 77.6245,
+        latitude: lat,
+        longitude: lng,
         nearestBranch: routing.branch,
         branchDistanceKm: routing.distanceKm,
         deliveryEtaMinutes: routing.etaMinutes,
@@ -258,5 +262,5 @@ if (typeof window !== 'undefined') {
     } catch (e) {
       console.warn('Store client hydration error:', e);
     }
-  }, 0);
+  }
 }

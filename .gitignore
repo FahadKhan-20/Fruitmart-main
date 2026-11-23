@@ -46,3 +46,6 @@ next-env.d.ts
 *.sqlite-shm
 *.sqlite-wal
 
+
+# Playwright MCP output
+.playwright-mcp/

@@ -117,9 +117,10 @@ export default function VerifyPage() {
               <label className="block mb-2 text-sm font-bold text-gray-700">6-Digit Code</label>
               <input
                 type="text"
-                maxLength={6}
+                inputMode="numeric"
+                autoComplete="one-time-code"
                 value={otp}
-                onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
+                onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
                 placeholder="• • • • • •"
                 className="w-full py-4 px-4 text-center text-3xl tracking-[0.5em] font-bold text-gray-800 transition-all bg-gray-50/50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-green-500/50 focus:border-green-500 focus:bg-white placeholder:text-gray-300 placeholder:font-normal placeholder:tracking-[0.2em]"
                 autoFocus

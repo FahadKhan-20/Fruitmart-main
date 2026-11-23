@@ -54,10 +54,15 @@ export default function Admin() {
     isTestKey: true,
     isLiveKey: false,
   });
-  const [adminKeyId, setAdminKeyId] = useState('');
-  const [adminKeySecret, setAdminKeySecret] = useState('');
-  const [gatewayMessage, setGatewayMessage] = useState(null);
-  const [isTestingGateway, setIsTestingGateway] = useState(false);
+
+  // ===================== ADMIN API TOKEN =====================
+  // Order endpoints need `Authorization: Bearer <ADMIN_API_TOKEN>`. The token is kept for
+  // this browser tab only (sessionStorage).
+  const adminTokenRef = useRef('');
+  const [needsAdminToken, setNeedsAdminToken] = useState(false);
+  const [adminTokenInput, setAdminTokenInput] = useState('');
+  const adminHeaders = () =>
+    adminTokenRef.current ? { Authorization: `Bearer ${adminTokenRef.current}` } : {};
 
   // ===================== ORDERS STATE =====================
   const [orders, setOrders] = useState([]);
@@ -92,8 +97,14 @@ export default function Admin() {
   // Fetch Orders from Database API
   const fetchOrders = async () => {
     try {
-      const res = await fetch('/api/orders');
+      const res = await fetch('/api/orders', { headers: adminHeaders() });
+      if (res.status === 401) {
+        setNeedsAdminToken(true);
+        setOrders([]);
+        return;
+      }
       if (!res.ok) throw new Error('Failed to fetch orders');
+      setNeedsAdminToken(false);
       const data = await res.json();
       setOrders(data || []);
     } catch (err) {
@@ -128,38 +139,29 @@ export default function Admin() {
       if (res.ok) {
         const data = await res.json();
         setGatewayData(data);
-        if (data.keyId) setAdminKeyId(data.keyId);
       }
     } catch (e) {
       console.warn('Could not load gateway data:', e);
     }
   };
 
-  const handleSaveGatewayKeys = async () => {
-    setIsTestingGateway(true);
-    setGatewayMessage(null);
+  const saveAdminToken = (e) => {
+    e.preventDefault();
+    const token = adminTokenInput.trim();
+    if (!token) return;
+    adminTokenRef.current = token;
     try {
-      const res = await fetch('/api/razorpay/keys', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keyId: adminKeyId, keySecret: adminKeySecret }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setGatewayMessage({ type: 'success', text: data.verificationMessage || 'Keys saved and active in .env.local!' });
-        await fetchGatewayData();
-      } else {
-        setGatewayMessage({ type: 'error', text: data.error || 'Failed to update keys' });
-      }
-    } catch (err) {
-      setGatewayMessage({ type: 'error', text: err.message });
-    } finally {
-      setIsTestingGateway(false);
-    }
+      sessionStorage.setItem('mdfresh_admin_token', token);
+    } catch {}
+    setAdminTokenInput('');
+    fetchOrders();
   };
 
   // Initial load & Polling for orders
   useEffect(() => {
+    try {
+      adminTokenRef.current = sessionStorage.getItem('mdfresh_admin_token') || '';
+    } catch {}
     fetchOrders();
     fetchProducts();
     fetchGatewayData();
@@ -181,7 +183,7 @@ export default function Admin() {
       setUpdatingOrderId(orderId);
       const res = await fetch(`/api/orders/${orderId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...adminHeaders() },
         body: JSON.stringify({ status: newStatus }),
       });
       if (!res.ok) throw new Error('Failed to update order status');
@@ -504,6 +506,32 @@ export default function Admin() {
       {/* ====================================================================== */}
       {activeTab === 'orders' && (
         <div className="max-w-5xl w-full space-y-6">
+
+          {needsAdminToken && (
+            <form
+              onSubmit={saveAdminToken}
+              className="bg-amber-50 border border-amber-200 p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center gap-3"
+            >
+              <div className="flex-1">
+                <div className="text-sm font-black text-amber-900">Admin token required</div>
+                <p className="text-xs text-amber-800">
+                  Enter the ADMIN_API_TOKEN from the server environment to view and update orders.
+                </p>
+              </div>
+              <input
+                type="password"
+                autoComplete="off"
+                value={adminTokenInput}
+                onChange={(e) => setAdminTokenInput(e.target.value)}
+                placeholder="Admin API token"
+                aria-label="Admin API token"
+                className="px-3 py-2 rounded-xl border border-amber-300 bg-white text-xs font-mono"
+              />
+              <button type="submit" className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black cursor-pointer">
+                Unlock
+              </button>
+            </form>
+          )}
           
           {/* Header Stats Bar */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -934,6 +962,7 @@ export default function Admin() {
                   >
                     <option value="Fruits">Fruits</option>
                     <option value="Vegetables">Vegetables</option>
+                    <option value="Dairy">Dairy</option>
                   </select>
                 </div>
 
@@ -1274,73 +1303,26 @@ export default function Admin() {
 
           <div className="grid md:grid-cols-12 gap-6 items-start">
             
-            {/* LEFT: API Keys Configuration Card */}
+            {/* LEFT: How to set API keys (read-only; keys live in environment variables) */}
             <div className="md:col-span-6 bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
               <div className="flex items-center justify-between pb-3 border-b border-gray-100">
                 <h3 className="text-sm font-black text-gray-900 flex items-center gap-2">
                   <Key className="w-4 h-4 text-green-600" />
                   <span>Razorpay API Credentials</span>
                 </h3>
-                <span className="text-[10px] font-bold text-gray-400">Saved to .env.local</span>
+                <span className="text-[10px] font-bold text-gray-400">Server environment only</span>
               </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">
-                  Razorpay Key ID
-                </label>
-                <input
-                  type="text"
-                  placeholder="rzp_test_... or rzp_live_..."
-                  value={adminKeyId}
-                  onChange={(e) => setAdminKeyId(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-mono font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-green-500 focus:bg-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">
-                  Razorpay Key Secret
-                </label>
-                <input
-                  type="password"
-                  placeholder={gatewayData.hasSecret ? '••••••••••••••••••••••••' : 'Enter Key Secret from Razorpay Dashboard'}
-                  value={adminKeySecret}
-                  onChange={(e) => setAdminKeySecret(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-mono font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-green-500 focus:bg-white"
-                />
-                <p className="text-[10px] text-gray-400 mt-1">
-                  Obtain live or test credentials at <a href="https://dashboard.razorpay.com/#/app/keys" target="_blank" rel="noreferrer" className="text-green-600 font-bold underline">dashboard.razorpay.com</a>
-                </p>
-              </div>
-
-              {gatewayMessage && (
-                <div className={`p-3 rounded-xl text-xs font-bold ${
-                  gatewayMessage.type === 'success' 
-                    ? 'bg-emerald-50 border border-emerald-200 text-emerald-900' 
-                    : 'bg-red-50 border border-red-200 text-red-900'
-                }`}>
-                  {gatewayMessage.text}
-                </div>
-              )}
-
-              <button
-                type="button"
-                disabled={isTestingGateway}
-                onClick={handleSaveGatewayKeys}
-                className="w-full py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-black shadow-md transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-              >
-                {isTestingGateway ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Verifying with Razorpay API...</span>
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>Save & Test Razorpay Connection</span>
-                  </>
-                )}
-              </button>
+              <p className="text-xs text-gray-600 leading-relaxed">
+                For security, payment keys cannot be changed from the browser. Set them in
+                <code className="mx-1 px-1.5 py-0.5 bg-gray-100 rounded font-mono">.env.local</code>
+                (or your hosting provider&apos;s environment settings) and restart the server:
+              </p>
+              <pre className="p-3 bg-gray-900 text-green-300 rounded-xl text-[11px] font-mono overflow-x-auto">{`NEXT_PUBLIC_RAZORPAY_KEY_ID=rzp_live_...
+RAZORPAY_KEY_SECRET=...
+RAZORPAY_WEBHOOK_SECRET=...`}</pre>
+              <p className="text-[10px] text-gray-400">
+                Get keys at <a href="https://dashboard.razorpay.com/#/app/keys" target="_blank" rel="noreferrer" className="text-green-600 font-bold underline">dashboard.razorpay.com</a>
+              </p>
             </div>
 
             {/* RIGHT: Connected Payment Channels & Launch Checklist */}

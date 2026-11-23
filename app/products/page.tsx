@@ -1,5 +1,6 @@
 'use client';
 
+import { STORE_CATEGORIES } from '@/lib/categories';
 import { useState, useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import ProductCard from '@/components/ProductCard';
@@ -87,7 +88,9 @@ export default function ProductsPage() {
   }, [allProducts, selectedCategory, sortBy, searchQuery]);
 
 
-  const categories = ['Fruits', 'Vegetables'];
+  const categories = STORE_CATEGORIES.map((c) => c.name);
+  const isDairySoon =
+    !searchQuery && selectedCategory === 'Dairy' && filteredProducts.length === 0;
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 pt-20">
@@ -218,6 +221,7 @@ export default function ProductsPage() {
               </motion.div>
 
               <motion.div
+                key={`${selectedCategory ?? 'all'}:${sortBy}:${searchQuery}`}
                 variants={containerVariants}
                 initial="hidden"
                 animate="visible"
@@ -228,6 +232,22 @@ export default function ProductsPage() {
                 ))}
               </motion.div>
             </>
+          ) : isDairySoon ? (
+            <motion.div
+              key="dairy-soon"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+              className="text-center py-20"
+            >
+              <div className="text-6xl mb-4" aria-hidden="true">🥛</div>
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
+                Dairy is coming soon
+              </h2>
+              <p className="text-gray-600 dark:text-gray-400">
+                Fresh milk, curd, paneer and butter will be listed here shortly.
+              </p>
+            </motion.div>
           ) : (
             <motion.div
               initial={{ opacity: 0, y: 20 }}

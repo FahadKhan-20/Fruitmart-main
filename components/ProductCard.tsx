@@ -33,12 +33,15 @@ export default function ProductCard({
 
   return (
     <motion.div
-      layout
-      initial={{ opacity: 0, scale: 0.95, y: 10 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.95, y: 10 }}
-      whileHover={{ y: -6, scale: 1.01 }}
-      transition={{ duration: 0.3, ease: 'easeOut' }}
+      initial={{ opacity: 0, y: 14, scale: 0.97 }}
+      animate={{
+        opacity: 1,
+        y: 0,
+        scale: 1,
+        // Cards cascade in when a category opens. Capped so long lists do not lag.
+        transition: { duration: 0.32, ease: [0.22, 1, 0.36, 1], delay: Math.min(index ?? 0, 11) * 0.035 },
+      }}
+      whileHover={{ y: -6, transition: { type: 'spring', stiffness: 400, damping: 26 } }}
       className="group relative flex flex-col h-full bg-white/60 backdrop-blur-xl rounded-[2rem] border border-white/80 shadow-[0_4px_24px_-8px_rgba(0,0,0,0.06)] hover:shadow-[0_12px_40px_-8px_rgba(0,0,0,0.12)] hover:bg-white/80 overflow-hidden"
     >
       <div className="relative w-full aspect-square p-3">
@@ -99,8 +102,9 @@ export default function ProductCard({
               </div>
             ) : quantity === 0 ? (
               <motion.button
-                whileTap={{ scale: 0.95 }}
+                whileTap={{ scale: 0.9 }}
                 onClick={(e) => { e.preventDefault(); addItem(product); }}
+                aria-label={`Add ${product.name} to cart`}
                 className="flex items-center justify-center w-10 h-10 text-green-700 transition-all bg-green-50 rounded-2xl hover:bg-green-600 border border-green-200 hover:border-green-600 group/btn shadow-sm hover:shadow-md"
               >
                 <Plus className="w-5 h-5 transition-colors group-hover/btn:text-white" />
@@ -113,15 +117,17 @@ export default function ProductCard({
               >
                 <button
                   onClick={(e) => { e.preventDefault(); updateQuantity(product.id, quantity - 1); }}
+                  aria-label={`Remove one ${product.name}`}
                   className="w-8 h-8 flex items-center justify-center rounded-xl bg-white/20 hover:bg-white/30 transition-colors"
                 >
                   <Minus className="w-4 h-4" />
                 </button>
-                <span className="font-bold text-sm min-w-[1.5ch] text-center">
+                <span className="font-bold text-sm min-w-[1.5ch] text-center" aria-live="polite">
                   {quantity}
                 </span>
                 <button
                   onClick={(e) => { e.preventDefault(); updateQuantity(product.id, quantity + 1); }}
+                  aria-label={`Add one more ${product.name}`}
                   className="w-8 h-8 flex items-center justify-center rounded-xl bg-white/20 hover:bg-white/30 transition-colors"
                 >
                   <Plus className="w-4 h-4" />

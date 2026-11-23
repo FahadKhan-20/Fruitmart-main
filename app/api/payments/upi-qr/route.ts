@@ -6,7 +6,8 @@ import { AWAITING_PAYMENT, PAID, QR_TTL_SECONDS, getOrder, syncQrPayment } from 
 // POST { orderId } -> create a new single-use, fixed-amount UPI QR for this order.
 export async function POST(req: Request) {
   try {
-    const { orderId } = await req.json();
+    const body = await req.json().catch(() => null);
+    const orderId = body?.orderId ? String(body.orderId) : '';
     if (!orderId) {
       return NextResponse.json({ error: 'Missing orderId' }, { status: 400 });
     }
@@ -23,6 +24,9 @@ export async function POST(req: Request) {
     }
     if (order.payment_status === PAID) {
       return NextResponse.json({ error: 'Order is already paid' }, { status: 409 });
+    }
+    if (order.payment_status !== AWAITING_PAYMENT) {
+      return NextResponse.json({ error: 'This order is not waiting for a UPI payment' }, { status: 409 });
     }
 
     // Amount comes from the stored order, not from the browser.
@@ -54,13 +58,22 @@ export async function POST(req: Request) {
       success: true,
       qrId: qr.id,
       imageUrl: qr.image_url,
+      // Raw UPI intent behind the QR. Lets a phone open PhonePe / Google Pay directly
+      // for the same single-use, fixed-amount QR, so server-side confirmation still applies.
+      upiIntent:
+        typeof qr.image_content === 'string' && qr.image_content.startsWith('upi://')
+          ? qr.image_content
+          : null,
       amount: amountPaise / 100,
       closeBy,
     });
   } catch (error: any) {
     console.error('UPI QR creation error:', error);
-    const message = error?.error?.description || error?.message || 'Failed to create UPI QR';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const detail = error?.error?.description || error?.message || '';
+    const message = /auth/i.test(detail)
+      ? 'UPI QR is unavailable right now. Please pay by Cash on Delivery or try again later.'
+      : detail || 'Failed to create UPI QR';
+    return NextResponse.json({ error: message }, { status: 502 });
   }
 }
 

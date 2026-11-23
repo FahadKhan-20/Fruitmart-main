@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import Image from 'next/image';
 
 interface CategorySidebarProps {
-  categories: { id: string; name: string; image?: string }[];
+  categories: { id: string; name: string; image?: string; comingSoon?: boolean }[];
   selectedCategory: string;
   onSelectCategory: (name: string) => void;
 }
@@ -19,8 +19,9 @@ export default function CategorySidebar({ categories, selectedCategory, onSelect
           <button
             key={category.id}
             onClick={() => onSelectCategory(category.name)}
-            className={`relative flex items-center gap-3 p-3 text-left transition-all rounded-2xl group ${
-              isSelected ? 'bg-green-50' : 'hover:bg-gray-50'
+            aria-pressed={isSelected}
+            className={`relative flex items-center gap-3 p-3 text-left transition-colors duration-200 rounded-2xl group ${
+              isSelected ? '' : 'hover:bg-white/60'
             }`}
           >
             {isSelected && (
@@ -28,7 +29,7 @@ export default function CategorySidebar({ categories, selectedCategory, onSelect
                 layoutId="activeCategory"
                 className="absolute inset-0 bg-green-50 rounded-2xl border border-green-200"
                 initial={false}
-                transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+                transition={{ type: 'spring', stiffness: 420, damping: 34 }}
               />
             )}
             
@@ -44,6 +45,11 @@ export default function CategorySidebar({ categories, selectedCategory, onSelect
             <span className={`relative z-10 text-sm font-bold transition-colors ${isSelected ? 'text-green-800' : 'text-gray-600 group-hover:text-gray-900'}`}>
               {category.name}
             </span>
+            {category.comingSoon && (
+              <span className="relative z-10 ml-auto text-[10px] font-black uppercase tracking-wide text-sky-700 bg-sky-100 px-2 py-0.5 rounded-full">
+                Soon
+              </span>
+            )}
           </button>
         );
       })}

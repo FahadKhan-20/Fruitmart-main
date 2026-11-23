@@ -66,14 +66,26 @@ function SuccessContent() {
 
     const fetchOrder = async () => {
       try {
-        const res = await fetch(`/api/orders/${orderId}`);
-        if (!res.ok) throw new Error('Order not found');
+        const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}`);
+        if (res.status === 404) {
+          // Unknown order: stop polling and show the not-found state.
+          clearInterval(interval);
+          if (isMounted) {
+            setOrder(null);
+            setError('Order not found');
+            setLoading(false);
+          }
+          return;
+        }
+        if (!res.ok) throw new Error('Could not load order details');
         const data = await res.json();
         if (isMounted) {
           setOrder(data);
+          setError('');
           setLoading(false);
         }
       } catch (err: any) {
+        // Network hiccup: keep the last known order and retry on the next tick.
         if (isMounted) {
           setError(err.message || 'Could not load order details');
           setLoading(false);
@@ -81,10 +93,9 @@ function SuccessContent() {
       }
     };
 
-    fetchOrder();
-
     // Poll every 3 seconds for live updates from store manager
     const interval = setInterval(fetchOrder, 3000);
+    fetchOrder();
 
     return () => {
       isMounted = false;
@@ -110,6 +121,48 @@ function SuccessContent() {
   };
 
   const stage = getStage(order?.status);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="w-8 h-8 border-4 border-green-600 border-t-transparent rounded-full animate-spin" aria-label="Loading order"></div>
+      </div>
+    );
+  }
+
+  if (!order) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+          className="bg-white rounded-3xl shadow-xl border border-gray-100 max-w-md w-full p-8 text-center"
+        >
+          <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center">
+            <AlertCircle className="w-7 h-7" />
+          </div>
+          <h1 className="text-xl font-black text-gray-900">
+            {orderId ? 'Order not found' : 'No order to track'}
+          </h1>
+          <p className="mt-2 text-sm text-gray-500">
+            {orderId
+              ? error === 'Order not found'
+                ? `We could not find order ${orderId}. Check the link and try again.`
+                : 'We could not load this order right now. Please try again in a moment.'
+              : 'Place an order and its live tracker will appear here.'}
+          </p>
+          <Link
+            href="/"
+            className="mt-6 inline-flex items-center gap-2 px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-2xl text-sm font-bold transition-colors"
+          >
+            Back to MD FRESH Store
+            <ArrowRight className="w-4 h-4" />
+          </Link>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50/60 via-emerald-50/40 to-teal-50/60 py-8 px-4 flex flex-col items-center justify-center">

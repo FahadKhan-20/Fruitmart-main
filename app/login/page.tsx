@@ -1,5 +1,6 @@
 'use client';
 
+import { normalizeIndianPhone } from '@/lib/pricing';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
@@ -73,9 +74,10 @@ export default function LoginPage() {
                 </div>
                 <input
                   type="tel"
-                  maxLength={10}
+                  inputMode="numeric"
+                  autoComplete="tel-national"
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))}
+                  onChange={(e) => setPhone(normalizeIndianPhone(e.target.value))}
                   placeholder="Enter 10 digit number"
                   className="w-full py-4 pl-16 pr-4 transition-all bg-gray-50/50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-green-500/50 focus:border-green-500 focus:bg-white text-lg tracking-wide font-medium text-gray-900 placeholder:font-normal placeholder:text-gray-400"
                   autoFocus

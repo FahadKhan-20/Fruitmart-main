@@ -1,5 +1,6 @@
 'use client';
 
+import { normalizeIndianPhone } from '@/lib/pricing';
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -133,9 +134,10 @@ export default function AuthModal() {
                     </div>
                     <input
                       type="tel"
-                      maxLength={10}
+                      inputMode="numeric"
+                      autoComplete="tel-national"
                       value={phone}
-                      onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))}
+                      onChange={(e) => setPhone(normalizeIndianPhone(e.target.value))}
                       placeholder="Enter 10-digit number"
                       className="w-full py-3.5 pl-20 pr-4 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 focus:bg-white text-base font-bold tracking-wide text-gray-900 transition-all"
                       autoFocus

@@ -3,12 +3,13 @@ import { Product } from '@/types/product';
 import { products as localProducts, getProductsByCategory as getLocalProductsByCategory } from '@/lib/products';
 
 /**
- * Normalizes categories to standard Fruits or Vegetables
+ * Normalizes categories to standard Fruits, Vegetables or Dairy
  */
-const normalizeCategory = (cat: string): 'Fruits' | 'Vegetables' => {
+const normalizeCategory = (cat: string): 'Fruits' | 'Vegetables' | 'Dairy' => {
   if (!cat) return 'Fruits';
   const c = cat.toLowerCase();
   if (c.includes('veg')) return 'Vegetables';
+  if (c.includes('dairy') || c.includes('milk')) return 'Dairy';
   return 'Fruits';
 };
 

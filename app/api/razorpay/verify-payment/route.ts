@@ -8,7 +8,7 @@ export async function POST(req: Request) {
       razorpay_order_id,
       razorpay_payment_id,
       razorpay_signature,
-    } = await req.json();
+    } = (await req.json().catch(() => ({}))) || {};
 
     if (!razorpay_payment_id || !razorpay_order_id || !razorpay_signature) {
       return NextResponse.json({ success: false, error: 'Missing payment ID, order ID or signature' }, { status: 400 });

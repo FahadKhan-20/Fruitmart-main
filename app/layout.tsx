@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import ClientModals from "@/components/ClientModals";
 import ExtensionErrorSuppressor from "@/components/ExtensionErrorSuppressor";
+import MotionProvider from "@/components/MotionProvider";
 
 export const metadata: Metadata = {
   title: "MD FRESH - Fresh Fruits & Vegetables",
@@ -127,8 +128,10 @@ export default function RootLayout({
       </head>
       <body className="min-h-full flex flex-col bg-gray-50 font-sans" suppressHydrationWarning>
         <ExtensionErrorSuppressor />
-        <ClientModals />
-        {children}
+        <MotionProvider>
+          <ClientModals />
+          {children}
+        </MotionProvider>
       </body>
     </html>
   );

@@ -18,29 +18,62 @@ import {
   Check, 
   Sparkles, 
   AlertCircle, 
-  Lock,
-  ArrowRight,
   Navigation,
   Loader2,
-  Copy,
   ExternalLink,
-  Phone,
-  RefreshCw,
-  Settings,
-  CheckCircle2,
-  X,
   Store
 } from 'lucide-react';
 import Navbar from '@/components/Navbar';
-import Image from 'next/image';
 import { loadRazorpayScript } from '@/lib/razorpayClient';
 import { findNearestBranch } from '@/lib/branches';
+import {
+  computeTotals,
+  FREE_DELIVERY_THRESHOLD,
+  isValidIndianPhone,
+  normalizeIndianPhone,
+} from '@/lib/pricing';
 
 type PaymentTab = 'upi' | 'card' | 'cod' | 'wallet' | 'netbanking';
+type UpiModal = 'none' | 'phonepe' | 'gpay' | 'paytm' | 'bhim' | 'upi_qr';
+
+// Payment tab content slides in from the side of the tab that was picked.
+const tabContentVariants = {
+  enter: (dir: number) => ({ x: dir * 28, opacity: 0, filter: 'blur(2px)' }),
+  center: {
+    x: 0,
+    opacity: 1,
+    filter: 'blur(0px)',
+    transition: { duration: 0.24, ease: [0.22, 1, 0.36, 1] as const },
+  },
+  exit: (dir: number) => ({
+    x: dir * -28,
+    opacity: 0,
+    filter: 'blur(2px)',
+    transition: { duration: 0.14, ease: [0.4, 0, 1, 1] as const },
+  }),
+};
+
+const PAYMENT_TABS: { id: PaymentTab; label: string; icon: typeof Smartphone }[] = [
+  { id: 'upi', label: 'UPI Apps', icon: Smartphone },
+  { id: 'card', label: 'Cards', icon: CreditCard },
+  { id: 'cod', label: 'Cash on Del.', icon: Banknote },
+  { id: 'wallet', label: 'Wallets', icon: Wallet },
+  { id: 'netbanking', label: 'NetBank', icon: Building2 },
+];
+
+// Order of the server's response to POST /api/orders.
+interface PlacedOrder {
+  id: string;
+  items: { id: number | string; name: string; price: number; quantity: number; unit: string; image?: string }[];
+  delivery_fee: number;
+  total_amount: number;
+  payment_method: string;
+  delivery_address: string;
+}
 
 export default function CheckoutPage() {
   const router = useRouter();
-  const { items, getTotalPrice, clearCart } = useCartStore();
+  const { items, getTotalPrice, clearCart, hasHydrated } = useCartStore();
   const { 
     location, 
     fullAddress, 
@@ -50,29 +83,29 @@ export default function CheckoutPage() {
     branchDistanceKm,
     deliveryEtaMinutes,
     setLocationModalOpen, 
-    isAuthenticated, 
-    setAuthModalOpen, 
     user, 
     addOrder 
   } = useAppStore();
 
   const [activePaymentTab, setActivePaymentTab] = useState<PaymentTab>('upi');
+  // +1 when moving to a tab on the right, -1 to the left. Drives the slide direction.
+  const [tabDirection, setTabDirection] = useState(1);
+  const selectPaymentTab = (tab: PaymentTab) => {
+    const from = PAYMENT_TABS.findIndex((t) => t.id === activePaymentTab);
+    const to = PAYMENT_TABS.findIndex((t) => t.id === tab);
+    setTabDirection(to >= from ? 1 : -1);
+    setActivePaymentTab(tab);
+  };
   
   // Customer details
   const [customerName, setCustomerName] = useState(user?.name || '');
-  const [customerPhone, setCustomerPhone] = useState(user?.phone?.replace(/\D/g, '').slice(-10) || '');
+  const [customerPhone, setCustomerPhone] = useState(normalizeIndianPhone(user?.phone || ''));
   const [houseFlatNo, setHouseFlatNo] = useState('');
+  const [showFieldErrors, setShowFieldErrors] = useState(false);
   const [landmark, setLandmark] = useState('');
 
   // UPI State
   const [selectedUpiApp, setSelectedUpiApp] = useState<'phonepe' | 'gpay' | 'paytm' | 'bhim' | 'custom'>('phonepe');
-  const [copiedUpi, setCopiedUpi] = useState(false);
-
-  // Card details
-  const [cardNumber, setCardNumber] = useState('4242 4242 4242 4242');
-  const [cardExpiry, setCardExpiry] = useState('12/28');
-  const [cardCvc, setCardCvc] = useState('888');
-  const [cardHolder, setCardHolder] = useState(user?.name || 'Customer');
 
   // Selected Bank & Wallet
   const [selectedBank, setSelectedBank] = useState('HDFC Bank');
@@ -85,39 +118,16 @@ export default function CheckoutPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
   const [paymentError, setPaymentError] = useState('');
-  const [pendingOrderId, setPendingOrderId] = useState('');
+  const [gatewayConfigured, setGatewayConfigured] = useState(true);
 
-  // Razorpay Gateway Settings Drawer / Modal
-  const [showGatewayConfig, setShowGatewayConfig] = useState(false);
-  const [gatewayStatus, setGatewayStatus] = useState<{
-    configured: boolean;
-    keyId: string;
-    maskedKey: string;
-    hasSecret: boolean;
-    isTestKey: boolean;
-    isLiveKey: boolean;
-  }>({
-    configured: false,
-    keyId: '',
-    maskedKey: '',
-    hasSecret: false,
-    isTestKey: true,
-    isLiveKey: false,
-  });
-  const [inputKeyId, setInputKeyId] = useState('');
-  const [inputKeySecret, setInputKeySecret] = useState('');
-  const [keySaveMessage, setKeySaveMessage] = useState('');
-  const [isSavingKeys, setIsSavingKeys] = useState(false);
-
-  // Direct Payment & UPI Modal State
-  const [showDirectAppModal, setShowDirectAppModal] = useState<
-    'none' | 'phonepe' | 'gpay' | 'paytm' | 'bhim' | 'upi_qr' | 'card' | 'netbanking' | 'wallet'
-  >('none');
+  // UPI modal (QR + app links). The value is the app the customer picked.
+  const [showDirectAppModal, setShowDirectAppModal] = useState<UpiModal>('none');
 
   // Per-order dynamic Razorpay UPI QR (new QR for every order, confirmed server-side)
   const [upiQr, setUpiQr] = useState<{
     orderId: string;
     imageUrl: string;
+    upiIntent: string | null;
     amount: number;
     closeBy: number;
   } | null>(null);
@@ -125,11 +135,15 @@ export default function CheckoutPage() {
   const [upiQrError, setUpiQrError] = useState('');
   const [upiQrExpired, setUpiQrExpired] = useState(false);
   const [upiQrSecondsLeft, setUpiQrSecondsLeft] = useState(0);
+  // Unpaid order created for the UPI QR. Reused while the cart is unchanged, even when
+  // QR creation failed, so retries never create duplicate orders.
+  const [qrOrder, setQrOrder] = useState<{ cartKey: string; order: PlacedOrder } | null>(null);
 
-  const total = getTotalPrice();
-  const deliveryFee = total > 399 ? 0 : (total > 0 ? 25 : 0);
-  const handlingFee = total > 0 ? 2 : 0;
-  const finalTotal = total + deliveryFee + handlingFee;
+  const { subtotal: total, deliveryFee, handlingFee, total: finalTotal } = computeTotals(getTotalPrice());
+  const cartKey = items.map((i) => `${i.product.id}x${i.quantity}`).join(',');
+  const itemCount = items.reduce((n, i) => n + i.quantity, 0);
+  const phoneValid = isValidIndianPhone(customerPhone);
+  const flatValid = houseFlatNo.trim().length > 0;
 
   // Suppress third-party script alerts (like Razorpay checkout.js error alerts)
   useEffect(() => {
@@ -148,27 +162,21 @@ export default function CheckoutPage() {
     };
   }, []);
 
-  // Fetch Razorpay Gateway Status
-  const fetchGatewayStatus = async () => {
-    try {
-      const res = await fetch('/api/razorpay/keys');
-      if (res.ok) {
-        const data = await res.json();
-        setGatewayStatus(data);
-        if (data.keyId) {
-          setInputKeyId(data.keyId);
-        }
-      }
-    } catch (e) {
-      console.warn('Could not load Razorpay gateway status:', e);
-    }
-  };
+  // Gateway status decides whether online methods are offered at all.
+  useEffect(() => {
+    fetch('/api/razorpay/keys')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) setGatewayConfigured(Boolean(data.configured));
+      })
+      .catch(() => {});
+    loadRazorpayScript(); // Pre-load Razorpay checkout SDK
+  }, []);
 
   useEffect(() => {
     if (user?.name && !customerName) setCustomerName(user.name);
-    if (user?.phone && !customerPhone) setCustomerPhone(user.phone.replace(/\D/g, '').slice(-10));
-    fetchGatewayStatus();
-    loadRazorpayScript(); // Pre-load Razorpay checkout SDK
+    if (user?.phone && !customerPhone) setCustomerPhone(normalizeIndianPhone(user.phone));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   const toggleInstruction = (instruction: string) => {
@@ -179,366 +187,207 @@ export default function CheckoutPage() {
     );
   };
 
-  // Generate official standard UPI intent and deep link URIs
-  const generatedOrderId = pendingOrderId || `MD-${Date.now().toString().slice(-6)}`;
-  const payeeVpa = 'mdfresh@upi';
-  const payeeName = 'MD Fresh Store';
-  const upiTransactionNote = `Payment for order ${generatedOrderId}`;
-  
-  // Universal standard UPI intent
-  const standardUpiUri = `upi://pay?pa=${payeeVpa}&pn=${encodeURIComponent(payeeName)}&am=${finalTotal}&cu=INR&tn=${encodeURIComponent(upiTransactionNote)}&tr=${generatedOrderId}`;
-  
-  // Direct App-Specific Schemes
-  const phonepeDeepLink = `phonepe://pay?pa=${payeeVpa}&pn=${encodeURIComponent(payeeName)}&am=${finalTotal}&cu=INR&tn=${encodeURIComponent(upiTransactionNote)}&tr=${generatedOrderId}`;
-  const gpayDeepLink = `tez://upi/pay?pa=${payeeVpa}&pn=${encodeURIComponent(payeeName)}&am=${finalTotal}&cu=INR&tn=${encodeURIComponent(upiTransactionNote)}&tr=${generatedOrderId}`;
-  const paytmDeepLink = `paytmmp://pay?pa=${payeeVpa}&pn=${encodeURIComponent(payeeName)}&am=${finalTotal}&cu=INR&tn=${encodeURIComponent(upiTransactionNote)}&tr=${generatedOrderId}`;
-  const bhimDeepLink = `upi://pay?pa=${payeeVpa}&pn=${encodeURIComponent(payeeName)}&am=${finalTotal}&cu=INR&tn=${encodeURIComponent(upiTransactionNote)}&tr=${generatedOrderId}`;
-
-  // Dynamic Scannable QR code URL with real NPCI UPI string
-  const qrCodeImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=260x260&margin=10&data=${encodeURIComponent(standardUpiUri)}`;
-
-  // Save / Update Razorpay API Keys
-  const handleSaveKeys = async () => {
-    setIsSavingKeys(true);
-    setKeySaveMessage('');
-    try {
-      const res = await fetch('/api/razorpay/keys', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keyId: inputKeyId, keySecret: inputKeySecret }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setKeySaveMessage(data.verificationMessage || 'Keys saved successfully!');
-        await fetchGatewayStatus();
-      } else {
-        setKeySaveMessage(`Error: ${data.error || 'Failed to update keys'}`);
-      }
-    } catch (err: any) {
-      setKeySaveMessage(`Error: ${err.message}`);
-    } finally {
-      setIsSavingKeys(false);
-    }
+  // Shared checks for every payment path. Returns an error message or ''.
+  const validateDetails = () => {
+    setShowFieldErrors(true);
+    if (!flatValid) return 'Please enter your House / Flat number so the rider can find you.';
+    if (!phoneValid) return 'Please enter a valid 10-digit mobile number for order delivery & rider dispatch.';
+    return '';
   };
 
-  // ============================================================================
-  // OFFICIAL PAYMENT LAUNCHER
-  // ============================================================================
-  const handleInitiatePayment = async () => {
-    setPaymentError('');
+  const cartLines = () => items.map((i) => ({ id: i.product.id, quantity: i.quantity }));
 
-    if (!customerPhone || customerPhone.length < 10) {
-      setPaymentError('Please enter a valid 10-digit mobile number for order delivery & rider dispatch.');
-      return;
-    }
-
-    // 1. Instant Cash on Delivery Flow
-    if (activePaymentTab === 'cod') {
-      await finalizeOrder('Cash on Delivery (Pay at Doorstep)', 'Pending (Cash on Delivery)');
-      return;
-    }
-
-    // 2. Online Payment Gateway Flow (UPI, PhonePe, GPay, Paytm, Cards, NetBanking, Wallets)
-    setIsProcessing(true);
-
-    try {
-      // Step A: Create order token on backend
-      const createOrderRes = await fetch('/api/razorpay/create-order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          amount: finalTotal,
-          receipt: `rcpt_${Date.now()}`,
-        }),
-      });
-
-      const orderData = await createOrderRes.json();
-      if (!createOrderRes.ok || !orderData.success) {
-        throw new Error(orderData.error || 'Could not initiate payment session');
-      }
-
-      // Determine active method label
-      let currentPaymentMethodName = 'Razorpay UPI';
-      if (activePaymentTab === 'upi') {
-        currentPaymentMethodName = `Razorpay (${selectedUpiApp.toUpperCase()} UPI)`;
-      } else if (activePaymentTab === 'card') {
-        currentPaymentMethodName = 'Razorpay (Cards)';
-      } else if (activePaymentTab === 'netbanking') {
-        currentPaymentMethodName = `Razorpay NetBanking (${selectedBank})`;
-      } else if (activePaymentTab === 'wallet') {
-        currentPaymentMethodName = `Razorpay Wallet (${selectedWallet})`;
-      }
-
-      // Step B: If merchant has verified live Razorpay keys, launch Razorpay Standard Checkout
-      if (orderData.isOfficialRazorpayOrder && typeof window !== 'undefined' && (window as any).Razorpay) {
-        try {
-          const options: any = {
-            key: orderData.keyId,
-            amount: orderData.amount, // in paise
-            currency: orderData.currency || 'INR',
-            name: 'MD FRESH Grocery',
-            description: `10-Minute Delivery - ${items.length} Fresh Items`,
-            image: 'https://images.unsplash.com/photo-1610832958506-aa56368176cf?w=120&auto=format&fit=crop&q=80',
-            order_id: orderData.orderId,
-            prefill: {
-              name: customerName || 'Valued Customer',
-              email: user?.email || `${customerPhone}@mdfresh.com`,
-              contact: customerPhone ? `+91${customerPhone}` : '',
-              method: activePaymentTab === 'upi' ? 'upi' : activePaymentTab === 'card' ? 'card' : activePaymentTab === 'netbanking' ? 'netbanking' : 'wallet',
-            },
-            notes: {
-              address: `${houseFlatNo ? houseFlatNo + ', ' : ''}${fullAddress || location || 'Bengaluru'}`,
-              notes: deliveryNote.join(', '),
-            },
-            theme: {
-              color: '#16a34a', // MD Fresh Emerald Green
-            },
-            modal: {
-              ondismiss: function () {
-                setIsProcessing(false);
-              },
-            },
-            handler: async function (response: any) {
-              setIsVerifyingPayment(true);
-              try {
-                const verifyRes = await fetch('/api/razorpay/verify-payment', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(response),
-                });
-                const verifyData = await verifyRes.json();
-
-                if (verifyData.success) {
-                  await finalizeOrder(
-                    currentPaymentMethodName,
-                    'Paid',
-                    response.razorpay_payment_id,
-                    response.razorpay_order_id,
-                    response.razorpay_signature
-                  );
-                } else {
-                  setPaymentError(verifyData.error || 'Payment signature verification failed.');
-                  setIsVerifyingPayment(false);
-                  setIsProcessing(false);
-                }
-              } catch (err: any) {
-                setPaymentError(err.message || 'Payment verification encountered an issue.');
-                setIsVerifyingPayment(false);
-                setIsProcessing(false);
-              }
-            },
-          };
-
-          const rzp = new (window as any).Razorpay(options);
-          rzp.on('payment.failed', function (resp: any) {
-            console.error('Razorpay payment failed:', resp);
-            // Fall back smoothly to direct app modal
-            openDirectPaymentModal();
-          });
-
-          rzp.open();
-          setIsProcessing(false);
-          return;
-        } catch (rzpOpenErr) {
-          console.warn('Could not open Razorpay checkout iframe, falling back to direct payment modal:', rzpOpenErr);
-        }
-      }
-
-      // Step C: Seamless Direct Payment Modal (For UPI Apps, PhonePe, GPay, Paytm, Cards, NetBanking)
-      openDirectPaymentModal();
-      setIsProcessing(false);
-
-    } catch (err: any) {
-      console.warn('Payment initialization note:', err.message);
-      setIsProcessing(false);
-      openDirectPaymentModal();
-    }
-  };
-
-  const openDirectPaymentModal = () => {
-    if (activePaymentTab === 'upi') {
-      if (selectedUpiApp === 'phonepe') {
-        setShowDirectAppModal('phonepe');
-      } else if (selectedUpiApp === 'gpay') {
-        setShowDirectAppModal('gpay');
-      } else if (selectedUpiApp === 'paytm') {
-        setShowDirectAppModal('paytm');
-      } else {
-        setShowDirectAppModal('upi_qr');
-      }
-    } else if (activePaymentTab === 'card') {
-      setShowDirectAppModal('card');
-    } else if (activePaymentTab === 'netbanking') {
-      setShowDirectAppModal('netbanking');
-    } else if (activePaymentTab === 'wallet') {
-      setShowDirectAppModal('wallet');
-    } else {
-      setShowDirectAppModal('upi_qr');
-    }
-  };
-
-  // Finalize order into database & store
-  const finalizeOrder = async (
-    paymentMethodName: string, 
-    paymentStatus: string, 
-    razorpayPaymentId?: string | null,
-    razorpayOrderId?: string | null,
-    razorpaySignature?: string | null
-  ) => {
-    setIsVerifyingPayment(true);
-    setPaymentError('');
-
-    try {
-      const orderIdToUse = pendingOrderId || newOrderId();
-      const orderPayload = buildOrderPayload(
-        orderIdToUse,
-        paymentMethodName,
-        paymentStatus,
-        razorpayPaymentId || `pay_${Date.now().toString(36)}`,
-        razorpayOrderId || null,
-        razorpaySignature || null
-      );
-
-      // 1. Post to SQLite database API
-      const saveRes = await fetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(orderPayload),
-      });
-
-      if (!saveRes.ok) {
-        const saveErr = await saveRes.json();
-        console.warn('API order save note:', saveErr);
-      }
-
-      completeOrderLocally(orderIdToUse, orderPayload);
-    } catch (err: any) {
-      console.error('Finalize order error:', err);
-      setPaymentError(err.message || 'Payment confirmation failed. Please retry.');
-      setIsVerifyingPayment(false);
-    }
-  };
-
-  // Unique order ID. Safe when many customers check out at the same time.
-  function newOrderId() {
-    const rand = typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID().replace(/-/g, '').slice(0, 6)
-      : Math.random().toString(36).slice(2, 8);
-    return `MD-${Date.now().toString(36)}${rand}`.toUpperCase();
-  }
-
-  function buildOrderPayload(
-    orderIdToUse: string,
-    paymentMethodName: string,
-    paymentStatus: string,
-    razorpayPaymentId: string | null,
-    razorpayOrderId: string | null,
-    razorpaySignature: string | null
-  ) {
-      const fullDeliveryAddr = `${houseFlatNo ? 'Flat/House: ' + houseFlatNo + ', ' : ''}${landmark ? 'Landmark: ' + landmark + ', ' : ''}${fullAddress || location || 'Bengaluru, Karnataka'}`;
-
-      // Automatically route to the geographically nearest branch using GPS coordinates / address
-      const routing = findNearestBranch(latitude, longitude, fullDeliveryAddr);
-      const branchToAssign = nearestBranch || routing.branch;
-      const branchDistanceToAssign = branchDistanceKm ?? routing.distanceKm;
-
-      const orderPayload = {
-        id: orderIdToUse,
-        customer_name: customerName || 'Valued Customer',
-        customer_phone: customerPhone ? `+91 ${customerPhone}` : '+91 9876543210',
-        delivery_address: fullDeliveryAddr,
-        latitude: latitude || 12.9352,
-        longitude: longitude || 77.6245,
-        assigned_branch_id: branchToAssign.id,
-        assigned_branch_name: branchToAssign.name,
-        branch_distance_km: branchDistanceToAssign,
-        items: items.map((i) => ({
-          id: i.product.id,
-          name: i.product.name,
-          price: i.product.price,
-          quantity: i.quantity,
-          unit: i.product.unit,
-          image: i.product.image,
-        })),
-        subtotal: total,
-        delivery_fee: deliveryFee,
-        handling_fee: handlingFee,
-        total_amount: finalTotal,
-        payment_method: paymentMethodName,
-        payment_status: paymentStatus,
-        razorpay_payment_id: razorpayPaymentId,
-        razorpay_order_id: razorpayOrderId,
-        razorpay_signature: razorpaySignature,
-        status: 'received',
+  // Create the order on the server. The server prices the cart and sets the payment status.
+  const placeOrder = async (payment: 'cod' | 'upi_qr' | 'razorpay', extra: Record<string, string> = {}) => {
+    const res = await fetch('/api/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        items: cartLines(),
+        payment,
+        customer_name: customerName,
+        customer_phone: customerPhone,
+        house_flat_no: houseFlatNo,
+        landmark,
+        delivery_address: fullAddress || location || 'Bengaluru, Karnataka',
+        latitude,
+        longitude,
         delivery_notes: deliveryNote.join(', '),
-      };
-      return orderPayload;
-  }
+        ...extra,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error(data.error || 'Could not place order. Please try again.');
+    return data.order as PlacedOrder;
+  };
 
   // Save in local store, clear cart, go to live order tracker.
-  function completeOrderLocally(orderIdToUse: string, orderPayload: ReturnType<typeof buildOrderPayload>) {
+  const completeOrderLocally = (order: PlacedOrder) => {
     addOrder({
-      id: orderIdToUse,
+      id: order.id,
       createdAt: new Date().toISOString(),
-      items: orderPayload.items,
-      totalAmount: orderPayload.total_amount,
-      deliveryFee: orderPayload.delivery_fee,
-      paymentMethod: orderPayload.payment_method,
+      items: order.items,
+      totalAmount: order.total_amount,
+      deliveryFee: order.delivery_fee,
+      paymentMethod: order.payment_method,
       status: 'Order Placed',
-      deliveryAddress: orderPayload.delivery_address,
+      deliveryAddress: order.delivery_address,
     });
     clearCart();
     setShowDirectAppModal('none');
-    router.push(`/success?orderId=${orderIdToUse}`);
-  }
+    router.push(`/success?orderId=${encodeURIComponent(order.id)}`);
+  };
 
-  // Create a new order in "Awaiting Payment" state, then a new single-use QR for it.
-  const startUpiQrPayment = async (forceNew = false) => {
-    setUpiQrError('');
-    if (!customerPhone || customerPhone.length < 10) {
-      setUpiQrError('Enter a valid 10-digit mobile number before paying.');
+  // ============================================================================
+  // PAYMENT LAUNCHER
+  // ============================================================================
+  const handleInitiatePayment = async () => {
+    setPaymentError('');
+    const invalid = validateDetails();
+    if (invalid) {
+      setPaymentError(invalid);
       return;
     }
-    // Reuse the current QR when it is still valid for the same amount.
-    if (!forceNew && upiQr && upiQr.amount === finalTotal && upiQr.closeBy * 1000 > Date.now()) {
+
+    // 1. Cash on Delivery
+    if (activePaymentTab === 'cod') {
+      setIsVerifyingPayment(true);
+      try {
+        completeOrderLocally(await placeOrder('cod'));
+      } catch (err: any) {
+        setPaymentError(err.message);
+        setIsVerifyingPayment(false);
+      }
+      return;
+    }
+
+    // 2. UPI: per-order dynamic QR, confirmed by the server.
+    if (activePaymentTab === 'upi') {
+      setShowDirectAppModal(selectedUpiApp === 'custom' ? 'upi_qr' : selectedUpiApp);
+      return;
+    }
+
+    // 3. Cards / NetBanking / Wallets: Razorpay Standard Checkout.
+    const unavailable = 'Card, NetBanking and Wallet payments are unavailable right now. Please pay by UPI QR or Cash on Delivery.';
+    if (!gatewayConfigured) {
+      setPaymentError(unavailable);
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      const createOrderRes = await fetch('/api/razorpay/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: cartLines() }),
+      });
+      const orderData = await createOrderRes.json().catch(() => ({}));
+      if (!createOrderRes.ok || !orderData.success) {
+        throw new Error(createOrderRes.status >= 500 ? unavailable : orderData.error || unavailable);
+      }
+
+      // The SDK load can hang when the network blocks it; give up after 8 s.
+      await Promise.race([loadRazorpayScript(), new Promise((r) => setTimeout(r, 8000))]);
+      const RazorpayCtor = (window as any).Razorpay;
+      if (!RazorpayCtor) throw new Error(unavailable);
+
+      const methodLabel =
+        activePaymentTab === 'card' ? 'Cards' :
+        activePaymentTab === 'netbanking' ? `NetBanking - ${selectedBank}` :
+        `Wallet - ${selectedWallet}`;
+
+      const rzp = new RazorpayCtor({
+        key: orderData.keyId,
+        amount: orderData.amount, // in paise, set by the server
+        currency: orderData.currency || 'INR',
+        name: 'MD FRESH Grocery',
+        description: `10-Minute Delivery - ${itemCount} Fresh Items`,
+        order_id: orderData.orderId,
+        prefill: {
+          name: customerName || 'Valued Customer',
+          email: user?.email || undefined,
+          contact: `+91${customerPhone}`,
+          method: activePaymentTab,
+        },
+        notes: {
+          address: `${houseFlatNo}, ${fullAddress || location || 'Bengaluru'}`.slice(0, 250),
+          notes: deliveryNote.join(', '),
+        },
+        theme: { color: '#16a34a' },
+        modal: {
+          ondismiss: () => setIsProcessing(false),
+        },
+        handler: async (response: any) => {
+          setIsVerifyingPayment(true);
+          try {
+            const order = await placeOrder('razorpay', {
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+              method_label: methodLabel,
+            });
+            completeOrderLocally(order);
+          } catch (err: any) {
+            setPaymentError(
+              `${err.message}. If money was debited, it will be refunded automatically. Payment ID: ${response.razorpay_payment_id}`
+            );
+            setIsVerifyingPayment(false);
+            setIsProcessing(false);
+          }
+        },
+      });
+      rzp.on('payment.failed', (resp: any) => {
+        setPaymentError(resp?.error?.description || 'Payment failed. Please try again or pick another method.');
+        setIsProcessing(false);
+      });
+      rzp.open();
+    } catch (err: any) {
+      setPaymentError(err.message || unavailable);
+      setIsProcessing(false);
+    }
+  };
+
+  // Create (or reuse) the unpaid order, then a new single-use QR for it.
+  const startUpiQrPayment = async (forceNew = false) => {
+    setUpiQrError('');
+    const invalid = validateDetails();
+    if (invalid) {
+      setUpiQrError(invalid);
+      return;
+    }
+    // Reuse the current QR when it is still valid for the same cart.
+    if (!forceNew && upiQr && qrOrder?.cartKey === cartKey && upiQr.closeBy * 1000 > Date.now()) {
       return;
     }
 
     setUpiQrLoading(true);
     setUpiQrExpired(false);
+    setUpiQr(null);
     try {
-      // Same unpaid order can get a fresh QR; otherwise make a new order.
-      let orderIdToUse = upiQr && upiQr.amount === finalTotal ? upiQr.orderId : '';
-      if (!orderIdToUse) {
-        orderIdToUse = newOrderId();
-        const payload = buildOrderPayload(orderIdToUse, 'UPI QR (Razorpay)', 'Awaiting Payment', null, null, null);
-        const saveRes = await fetch('/api/orders', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        if (!saveRes.ok) {
-          const saveErr = await saveRes.json().catch(() => ({}));
-          throw new Error(saveErr.error || 'Could not create order');
-        }
+      let order = qrOrder?.cartKey === cartKey ? qrOrder.order : null;
+      if (!order) {
+        order = await placeOrder('upi_qr');
+        setQrOrder({ cartKey, order });
       }
 
       const qrRes = await fetch('/api/payments/upi-qr', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId: orderIdToUse }),
+        body: JSON.stringify({ orderId: order.id }),
       });
-      const qrData = await qrRes.json();
+      const qrData = await qrRes.json().catch(() => ({}));
       if (!qrRes.ok || !qrData.success) {
         throw new Error(qrData.error || 'Could not generate UPI QR');
       }
 
       setUpiQr({
-        orderId: orderIdToUse,
+        orderId: order.id,
         imageUrl: qrData.imageUrl,
+        upiIntent: qrData.upiIntent || null,
         amount: qrData.amount,
         closeBy: qrData.closeBy,
       });
+      setUpiQrSecondsLeft(Math.max(0, qrData.closeBy - Math.floor(Date.now() / 1000)));
     } catch (err: any) {
       setUpiQrError(err.message || 'Could not generate UPI QR');
     } finally {
@@ -546,14 +395,20 @@ export default function CheckoutPage() {
     }
   };
 
-  const isUpiModal =
-    showDirectAppModal === 'phonepe' ||
-    showDirectAppModal === 'gpay' ||
-    showDirectAppModal === 'paytm' ||
-    showDirectAppModal === 'bhim' ||
-    showDirectAppModal === 'upi_qr';
+  const isUpiModal = showDirectAppModal !== 'none';
 
-  // Generate the QR as soon as a UPI modal opens.
+  // Build an app-specific link from the QR's UPI intent. Android can also use plain upi://
+  // (shows an app chooser); iOS needs the app's own scheme.
+  const upiAppLink = (app: 'phonepe' | 'gpay' | 'paytm' | 'any') => {
+    if (!upiQr?.upiIntent) return undefined;
+    const query = upiQr.upiIntent.split('?')[1] || '';
+    if (app === 'phonepe') return `phonepe://pay?${query}`;
+    if (app === 'gpay') return `tez://upi/pay?${query}`;
+    if (app === 'paytm') return `paytmmp://pay?${query}`;
+    return upiQr.upiIntent;
+  };
+
+  // Generate the QR as soon as the UPI modal opens.
   useEffect(() => {
     if (isUpiModal) startUpiQrPayment();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -561,8 +416,9 @@ export default function CheckoutPage() {
 
   // Poll the server every 3 s. Server confirms with Razorpay (or webhook already did).
   useEffect(() => {
-    if (!isUpiModal || !upiQr || upiQrExpired) return;
+    if (!isUpiModal || !upiQr || upiQrExpired || !qrOrder) return;
     let stopped = false;
+    const paidOrder = qrOrder.order;
 
     const tick = async () => {
       const secondsLeft = Math.max(0, upiQr.closeBy - Math.floor(Date.now() / 1000));
@@ -573,9 +429,9 @@ export default function CheckoutPage() {
         if (stopped) return;
         if (data.paid) {
           stopped = true;
-          const payload = buildOrderPayload(upiQr.orderId, 'UPI QR (Razorpay)', 'Paid', null, null, null);
-          completeOrderLocally(upiQr.orderId, payload);
           setUpiQr(null);
+          setQrOrder(null);
+          completeOrderLocally({ ...paidOrder, payment_method: 'UPI QR (Razorpay)' });
           return;
         }
       } catch (e) {
@@ -591,7 +447,18 @@ export default function CheckoutPage() {
       clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isUpiModal, upiQr, upiQrExpired]);
+  }, [isUpiModal, upiQr, upiQrExpired, qrOrder]);
+
+  if (!hasHydrated) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col">
+        <Navbar />
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="w-8 h-8 animate-spin text-green-600" aria-label="Loading cart" />
+        </div>
+      </div>
+    );
+  }
 
   if (items.length === 0) {
     return (
@@ -630,19 +497,9 @@ export default function CheckoutPage() {
             Back to Store
           </button>
 
-          {/* Razorpay Gateway Status & Key Settings Button */}
-          <button
-            type="button"
-            onClick={() => setShowGatewayConfig(true)}
-            className="inline-flex items-center gap-2 text-xs font-black px-3.5 py-1.5 rounded-xl bg-white border border-gray-200 hover:border-gray-300 shadow-xs text-gray-800 cursor-pointer transition"
-          >
-            <span className={`w-2 h-2 rounded-full ${gatewayStatus.configured ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-            <span>Payment Gateway: {gatewayStatus.configured ? (gatewayStatus.isLiveKey ? 'Razorpay Live' : 'Razorpay Sandbox') : 'Connect Keys'}</span>
-            <Settings className="w-3.5 h-3.5 text-gray-500" />
-          </button>
         </div>
 
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-8">
           <div>
             <h1 className="text-3xl font-black text-gray-900 tracking-tight">Checkout</h1>
             <p className="text-xs text-gray-500 mt-1">Review address, select payment app & instant dispatch</p>
@@ -653,7 +510,17 @@ export default function CheckoutPage() {
           </span>
         </div>
 
+        <AnimatePresence>
         {paymentError && (
+          <motion.div
+            key="payment-error"
+            role="alert"
+            initial={{ opacity: 0, y: -8, height: 0 }}
+            animate={{ opacity: 1, y: 0, height: 'auto' }}
+            exit={{ opacity: 0, y: -8, height: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
           <div className="p-4 mb-6 bg-red-50 border border-red-200 text-red-800 rounded-2xl flex items-center justify-between gap-3 text-sm font-semibold">
             <div className="flex items-center gap-2">
               <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
@@ -661,27 +528,30 @@ export default function CheckoutPage() {
             </div>
             <button
               onClick={() => setPaymentError('')}
+              aria-label="Dismiss error"
               className="text-red-500 hover:text-red-800 text-xs font-bold"
             >
               ✕
             </button>
           </div>
+          </motion.div>
         )}
+        </AnimatePresence>
 
-        <div className="grid lg:grid-cols-12 gap-8 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           
           {/* LEFT COLUMN: Delivery Details & Payment Selection */}
-          <div className="lg:col-span-7 space-y-6">
+          <div className="lg:col-span-7 space-y-6 min-w-0">
             
             {/* Delivery Address & GPS Card */}
             <section className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 relative overflow-hidden">
-              <div className="flex items-start justify-between gap-4 mb-4">
-                <div className="flex items-center gap-3">
+              <div className="flex items-start justify-between gap-3 mb-4">
+                <div className="flex items-center gap-3 min-w-0">
                   <div className="w-10 h-10 rounded-2xl bg-green-100 text-green-700 flex items-center justify-center shrink-0">
                     <MapPin className="w-5 h-5" />
                   </div>
-                  <div>
-                    <div className="flex items-center gap-2">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                       <h2 className="text-base font-black text-gray-900 leading-tight" suppressHydrationWarning>
                         {location || 'Indiranagar, Bengaluru'}
                       </h2>
@@ -735,24 +605,36 @@ export default function CheckoutPage() {
               </div>
 
               {/* Exact Flat/House & Landmark */}
-              <div className="grid grid-cols-2 gap-3 pt-3 border-t border-gray-100 mb-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-gray-100 mb-4">
                 <div>
-                  <label className="block text-[11px] font-black uppercase text-gray-600 mb-1">
+                  <label htmlFor="house-flat" className="block text-[11px] font-black uppercase text-gray-600 mb-1">
                     House / Flat / Floor No. *
                   </label>
                   <input
+                    id="house-flat"
                     type="text"
+                    required
+                    maxLength={120}
+                    autoComplete="address-line1"
                     placeholder="e.g. Flat 302, 3rd Floor"
                     value={houseFlatNo}
                     onChange={(e) => setHouseFlatNo(e.target.value)}
-                    className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-green-500 focus:bg-white"
+                    aria-invalid={showFieldErrors && !flatValid}
+                    className={`w-full px-3 py-2 bg-gray-50 border rounded-xl text-xs font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-green-500 focus:bg-white ${
+                      showFieldErrors && !flatValid ? 'border-red-400' : 'border-gray-200'
+                    }`}
                   />
+                  {showFieldErrors && !flatValid && (
+                    <p className="mt-1 text-[11px] font-bold text-red-600">Required for delivery</p>
+                  )}
                 </div>
                 <div>
-                  <label className="block text-[11px] font-black uppercase text-gray-600 mb-1">
+                  <label htmlFor="landmark" className="block text-[11px] font-black uppercase text-gray-600 mb-1">
                     Landmark (Optional)
                   </label>
                   <input
+                    id="landmark"
+                    maxLength={120}
                     type="text"
                     placeholder="e.g. Near Metro Station"
                     value={landmark}
@@ -763,12 +645,15 @@ export default function CheckoutPage() {
               </div>
 
               {/* Customer Contact Details */}
-              <div className="grid grid-cols-2 gap-3 pb-3 border-b border-gray-100 mb-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-3 border-b border-gray-100 mb-4">
                 <div>
-                  <label className="block text-[11px] font-black uppercase text-gray-600 mb-1">
+                  <label htmlFor="recipient-name" className="block text-[11px] font-black uppercase text-gray-600 mb-1">
                     Recipient Name
                   </label>
                   <input
+                    id="recipient-name"
+                    maxLength={80}
+                    autoComplete="name"
                     type="text"
                     placeholder="Enter your name"
                     value={customerName}
@@ -777,20 +662,29 @@ export default function CheckoutPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-black uppercase text-gray-600 mb-1">
+                  <label htmlFor="delivery-phone" className="block text-[11px] font-black uppercase text-gray-600 mb-1">
                     Delivery Phone Number *
                   </label>
                   <div className="relative flex items-center">
                     <span className="absolute left-3 text-xs font-bold text-gray-500">+91</span>
                     <input
+                      id="delivery-phone"
                       type="tel"
-                      maxLength={10}
+                      inputMode="numeric"
+                      autoComplete="tel-national"
+                      required
                       placeholder="10 digit number"
                       value={customerPhone}
-                      onChange={(e) => setCustomerPhone(e.target.value.replace(/\D/g, ''))}
-                      className="w-full pl-10 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-green-500 focus:bg-white"
+                      onChange={(e) => setCustomerPhone(normalizeIndianPhone(e.target.value))}
+                      aria-invalid={showFieldErrors && !phoneValid}
+                      className={`w-full pl-10 pr-3 py-2 bg-gray-50 border rounded-xl text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-green-500 focus:bg-white ${
+                        showFieldErrors && !phoneValid ? 'border-red-400' : 'border-gray-200'
+                      }`}
                     />
                   </div>
+                  {showFieldErrors && !phoneValid && (
+                    <p className="mt-1 text-[11px] font-bold text-red-600">Enter a valid 10-digit mobile number</p>
+                  )}
                 </div>
               </div>
 
@@ -832,34 +726,56 @@ export default function CheckoutPage() {
               </div>
 
               {/* Payment Tab Navigation */}
-              <div className="grid grid-cols-5 gap-1.5 p-1 bg-gray-100/80 rounded-2xl mb-6">
-                {[
-                  { id: 'upi', label: 'UPI Apps', icon: Smartphone },
-                  { id: 'card', label: 'Cards', icon: CreditCard },
-                  { id: 'cod', label: 'Cash on Del.', icon: Banknote },
-                  { id: 'wallet', label: 'Wallets', icon: Wallet },
-                  { id: 'netbanking', label: 'NetBank', icon: Building2 },
-                ].map((tab) => {
+              <div role="tablist" aria-label="Payment method" className="grid grid-cols-5 gap-1 p-1 bg-gray-100/80 rounded-2xl mb-6">
+                {PAYMENT_TABS.map((tab) => {
                   const Icon = tab.icon;
                   const isActive = activePaymentTab === tab.id;
+                  const isOnline = tab.id === 'card' || tab.id === 'wallet' || tab.id === 'netbanking';
                   return (
                     <button
                       key={tab.id}
                       type="button"
-                      onClick={() => setActivePaymentTab(tab.id as PaymentTab)}
-                      className={`flex flex-col items-center justify-center py-2.5 px-1 rounded-xl transition-all font-bold text-xs cursor-pointer ${
-                        isActive
-                          ? 'bg-white text-gray-950 shadow-sm border border-gray-200/50'
-                          : 'text-gray-500 hover:text-gray-900 hover:bg-white/40'
+                      role="tab"
+                      aria-selected={isActive}
+                      onClick={() => selectPaymentTab(tab.id)}
+                      className={`relative min-w-0 flex flex-col items-center justify-center py-2.5 px-1 rounded-xl font-bold text-xs cursor-pointer transition-colors duration-200 ${
+                        isActive ? 'text-gray-950' : 'text-gray-500 hover:text-gray-900'
                       }`}
                     >
-                      <Icon className={`w-4 h-4 mb-1 ${isActive ? 'text-green-600' : 'text-gray-400'}`} />
-                      <span className="truncate text-[10px]">{tab.label}</span>
+                      {isActive && (
+                        <motion.span
+                          layoutId="payment-tab-pill"
+                          className="absolute inset-0 rounded-xl bg-white shadow-sm border border-gray-200/50"
+                          transition={{ type: 'spring', stiffness: 420, damping: 34 }}
+                        />
+                      )}
+                      <motion.span
+                        className="relative z-10 flex flex-col items-center min-w-0 max-w-full"
+                        animate={{ scale: isActive ? 1.04 : 1 }}
+                        transition={{ type: 'spring', stiffness: 420, damping: 30 }}
+                      >
+                        <Icon className={`w-4 h-4 mb-1 transition-colors duration-200 ${isActive ? 'text-green-600' : 'text-gray-400'}`} />
+                        <span className="truncate max-w-full text-[10px]">{tab.label}</span>
+                        {isOnline && !gatewayConfigured && (
+                          <span className="text-[8px] font-bold text-amber-600 leading-none mt-0.5">Unavailable</span>
+                        )}
+                      </motion.span>
                     </button>
                   );
                 })}
               </div>
 
+              <div className="relative overflow-hidden">
+              <AnimatePresence mode="wait" initial={false} custom={tabDirection}>
+              <motion.div
+                key={activePaymentTab}
+                role="tabpanel"
+                custom={tabDirection}
+                variants={tabContentVariants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+              >
               {/* TAB 1: UPI APPS (PHONEPE, GPAY, PAYTM, BHIM) */}
               {activePaymentTab === 'upi' && (
                 <div className="space-y-4">
@@ -1026,10 +942,11 @@ export default function CheckoutPage() {
                 <div className="space-y-3">
                   <p className="text-xs text-gray-500 font-semibold mb-2">Select wallet:</p>
                   {['PhonePe Wallet', 'Paytm Wallet', 'Amazon Pay', 'Mobikwik', 'Airtel Money'].map((wallet) => (
-                    <div
+                    <button
+                      type="button"
                       key={wallet}
                       onClick={() => setSelectedWallet(wallet)}
-                      className={`p-3.5 rounded-2xl border flex items-center justify-between transition cursor-pointer ${
+                      className={`w-full p-3.5 rounded-2xl border flex items-center justify-between transition cursor-pointer ${
                         selectedWallet === wallet
                           ? 'border-green-600 bg-green-50/50 shadow-xs'
                           : 'border-gray-200 hover:border-gray-300 bg-white'
@@ -1039,8 +956,10 @@ export default function CheckoutPage() {
                         <Wallet className="w-4 h-4 text-green-700" />
                         <span className="text-xs font-bold text-gray-900">{wallet}</span>
                       </div>
-                      <span className="text-xs font-black text-green-700">Select →</span>
-                    </div>
+                      <span className="text-xs font-black text-green-700">
+                        {selectedWallet === wallet ? <Check className="w-4 h-4" /> : 'Select →'}
+                      </span>
+                    </button>
                   ))}
                 </div>
               )}
@@ -1049,12 +968,13 @@ export default function CheckoutPage() {
               {activePaymentTab === 'netbanking' && (
                 <div className="space-y-3">
                   <p className="text-xs text-gray-500 font-semibold mb-2">Select your bank portal:</p>
-                  <div className="grid grid-cols-2 gap-2.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     {['HDFC Bank', 'ICICI Bank', 'State Bank of India', 'Axis Bank', 'Kotak Mahindra', 'Punjab National Bank'].map((bank) => (
-                      <div
+                      <button
+                        type="button"
                         key={bank}
                         onClick={() => setSelectedBank(bank)}
-                        className={`p-3 rounded-xl border text-xs font-bold flex items-center gap-2 transition cursor-pointer ${
+                        className={`p-3 rounded-xl border text-xs font-bold flex items-center gap-2 text-left transition cursor-pointer ${
                           selectedBank === bank
                             ? 'border-green-600 bg-green-50/50 text-green-950 shadow-xs'
                             : 'border-gray-200 bg-white hover:border-gray-300 text-gray-900'
@@ -1062,16 +982,19 @@ export default function CheckoutPage() {
                       >
                         <Building2 className="w-3.5 h-3.5 text-gray-500" />
                         <span className="truncate">{bank}</span>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 </div>
               )}
+              </motion.div>
+              </AnimatePresence>
+              </div>
             </section>
           </div>
 
           {/* RIGHT COLUMN: Order Summary & Place Order */}
-          <div className="lg:col-span-5 sticky top-24">
+          <div className="lg:col-span-5 lg:sticky lg:top-24 min-w-0">
             <div className="bg-white p-6 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-gray-100 space-y-6">
               
               <div className="flex items-center justify-between pb-3 border-b border-gray-100">
@@ -1083,7 +1006,7 @@ export default function CheckoutPage() {
 
               <div className="space-y-3 text-xs font-medium text-gray-600">
                 <div className="flex justify-between">
-                  <span>Item Total ({items.length} items)</span>
+                  <span>Item Total ({itemCount} {itemCount === 1 ? 'item' : 'items'})</span>
                   <span className="font-bold text-gray-900">₹{total}</span>
                 </div>
                 <div className="flex justify-between items-center">
@@ -1091,7 +1014,7 @@ export default function CheckoutPage() {
                     <span>Delivery Partner Fee</span>
                     {deliveryFee === 0 && (
                       <span className="text-[10px] font-bold text-green-700 bg-green-100 px-1.5 py-0.2 rounded">
-                        Free &gt;₹399
+                        Free &gt;₹{FREE_DELIVERY_THRESHOLD}
                       </span>
                     )}
                   </div>
@@ -1123,7 +1046,7 @@ export default function CheckoutPage() {
               >
                 <div className="flex flex-col text-left leading-tight">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-gray-800">
-                    {activePaymentTab === 'upi' ? `Pay via ${selectedUpiApp.toUpperCase()}` :
+                    {activePaymentTab === 'upi' ? `Pay via ${selectedUpiApp === 'gpay' ? 'Google Pay' : selectedUpiApp === 'bhim' ? 'BHIM UPI' : selectedUpiApp === 'phonepe' ? 'PhonePe' : selectedUpiApp === 'paytm' ? 'Paytm' : 'UPI'}` :
                      activePaymentTab === 'card' ? 'Pay with Card' :
                      activePaymentTab === 'cod' ? 'Cash on Delivery' : 'Proceed to Pay'}
                   </span>
@@ -1133,10 +1056,10 @@ export default function CheckoutPage() {
                   {isProcessing || isVerifyingPayment ? (
                     <>
                       <Loader2 className="w-5 h-5 animate-spin" />
-                      <span>Connecting...</span>
+                      <span>{activePaymentTab === 'cod' ? 'Placing order...' : 'Connecting...'}</span>
                     </>
                   ) : (
-                    <span>Proceed to Pay →</span>
+                    <span>{activePaymentTab === 'cod' ? 'Place Order →' : 'Proceed to Pay →'}</span>
                   )}
                 </div>
               </button>
@@ -1151,113 +1074,40 @@ export default function CheckoutPage() {
       </main>
 
       {/* ======================================================================== */}
-      {/* RAZORPAY GATEWAY CONFIGURATION MODAL (LIVE / TEST KEYS) */}
-      {/* ======================================================================== */}
-      {showGatewayConfig && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-gray-100">
-            <div className="flex items-center justify-between pb-4 border-b border-gray-100">
-              <div className="flex items-center gap-2">
-                <Settings className="w-5 h-5 text-green-600" />
-                <h3 className="text-base font-black text-gray-900">Razorpay Payment Gateway Settings</h3>
-              </div>
-              <button
-                onClick={() => setShowGatewayConfig(false)}
-                className="text-gray-400 hover:text-gray-700 p-1 text-lg cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="py-4 space-y-4">
-              <div className="p-3 bg-gray-50 rounded-2xl border border-gray-200 text-xs space-y-1">
-                <div className="flex justify-between font-bold">
-                  <span className="text-gray-600">Current Status:</span>
-                  <span className={gatewayStatus.configured ? 'text-green-700 font-black' : 'text-amber-700 font-black'}>
-                    {gatewayStatus.configured ? (gatewayStatus.isLiveKey ? '🟢 Production (Live)' : '🟠 Test Mode (Sandbox)') : '🔴 Enter Keys'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Key ID:</span>
-                  <span className="font-mono text-gray-800">{gatewayStatus.maskedKey || 'Not configured'}</span>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">
-                  Razorpay Key ID (rzp_test_... or rzp_live_...)
-                </label>
-                <input
-                  type="text"
-                  placeholder="rzp_test_XXXXXXXXXXXXXX"
-                  value={inputKeyId}
-                  onChange={(e) => setInputKeyId(e.target.value)}
-                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-mono font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-green-500 focus:bg-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">
-                  Razorpay Key Secret
-                </label>
-                <input
-                  type="password"
-                  placeholder="Enter Razorpay Secret Key"
-                  value={inputKeySecret}
-                  onChange={(e) => setInputKeySecret(e.target.value)}
-                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-mono font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-green-500 focus:bg-white"
-                />
-                <span className="text-[10px] text-gray-400 mt-1 block">
-                  Find your keys in Razorpay Dashboard &gt; Settings &gt; API Keys
-                </span>
-              </div>
-
-              {keySaveMessage && (
-                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-bold text-emerald-900">
-                  {keySaveMessage}
-                </div>
-              )}
-            </div>
-
-            <div className="flex items-center gap-3 pt-2">
-              <button
-                type="button"
-                disabled={isSavingKeys}
-                onClick={handleSaveKeys}
-                className="flex-1 py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-              >
-                {isSavingKeys ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                <span>Save & Verify Keys</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowGatewayConfig(false)}
-                className="px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl font-bold text-xs cursor-pointer"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ======================================================================== */}
       {/* DIRECT APP INTENT & SCANNABLE NPCI UPI MODAL */}
       {/* ======================================================================== */}
-      {showDirectAppModal !== 'none' && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-sm w-full p-6 text-center border border-gray-100 shadow-2xl">
+      <AnimatePresence>
+      {isUpiModal && (
+        <motion.div
+          key="upi-modal"
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowDirectAppModal('none');
+          }}
+        >
+          <motion.div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="upi-modal-title"
+            initial={{ opacity: 0, y: 24, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 16, scale: 0.97 }}
+            transition={{ type: 'spring', stiffness: 380, damping: 32 }}
+            className="bg-white rounded-3xl max-w-sm w-full p-6 text-center border border-gray-100 shadow-2xl max-h-[92vh] overflow-y-auto"
+          >
             <div className="flex items-center justify-between mb-3">
-              <h3 className="font-black text-gray-900 text-base">
+              <h3 id="upi-modal-title" className="font-black text-gray-900 text-base">
                 {showDirectAppModal === 'phonepe' ? 'PhonePe Payment' :
                  showDirectAppModal === 'gpay' ? 'Google Pay Payment' :
-                 showDirectAppModal === 'paytm' ? 'Paytm UPI Payment' :
-                 showDirectAppModal === 'card' ? 'Card Payment' :
-                 showDirectAppModal === 'netbanking' ? `${selectedBank} NetBanking` :
-                 showDirectAppModal === 'wallet' ? `${selectedWallet}` : 'Scan NPCI Dynamic QR'}
+                 showDirectAppModal === 'paytm' ? 'Paytm UPI Payment' : 'Scan NPCI Dynamic QR'}
               </h3>
               <button
                 onClick={() => setShowDirectAppModal('none')}
+                aria-label="Close payment window"
                 className="p-1 text-gray-400 hover:text-gray-700 text-lg cursor-pointer"
               >
                 ✕
@@ -1265,7 +1115,7 @@ export default function CheckoutPage() {
             </div>
 
             <p className="text-xs text-gray-500 mb-3">
-              Pay <strong>₹{finalTotal}</strong> directly to MD Fresh Grocery
+              Pay <strong>₹{upiQr?.amount ?? qrOrder?.order.total_amount ?? finalTotal}</strong> directly to MD Fresh Grocery
             </p>
 
             {/* UPI QR & App Trigger */}
@@ -1275,8 +1125,15 @@ export default function CheckoutPage() {
                   <div className="w-52 h-52 relative bg-white p-1 rounded-xl flex items-center justify-center overflow-hidden">
                     {upiQrLoading && <Loader2 className="w-8 h-8 animate-spin text-green-600" />}
                     {!upiQrLoading && upiQr && !upiQrExpired && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={upiQr.imageUrl} alt={`UPI QR for order ${upiQr.orderId}`} className="w-full h-full object-contain" />
+                      <motion.img
+                        key={upiQr.imageUrl}
+                        src={upiQr.imageUrl}
+                        alt={`UPI QR for order ${upiQr.orderId}`}
+                        initial={{ opacity: 0, scale: 0.92 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                        className="w-full h-full object-contain"
+                      />
                     )}
                     {!upiQrLoading && upiQrExpired && (
                       <span className="text-xs font-bold text-red-600">QR expired</span>
@@ -1293,6 +1150,38 @@ export default function CheckoutPage() {
                 </div>
 
                 <div className="space-y-2 pt-1">
+                  {upiQr?.upiIntent && !upiQrExpired && !upiQrLoading && (
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-bold text-gray-500">On this phone? Open your UPI app:</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <a
+                          href={upiAppLink('phonepe')}
+                          className={`py-3 rounded-xl text-xs font-black text-white flex items-center justify-center gap-1.5 bg-purple-600 hover:bg-purple-700 ${
+                            showDirectAppModal === 'phonepe' ? 'ring-2 ring-purple-300' : ''
+                          }`}
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          PhonePe
+                        </a>
+                        <a
+                          href={upiAppLink('gpay')}
+                          className={`py-3 rounded-xl text-xs font-black text-white flex items-center justify-center gap-1.5 bg-blue-600 hover:bg-blue-700 ${
+                            showDirectAppModal === 'gpay' ? 'ring-2 ring-blue-300' : ''
+                          }`}
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          Google Pay
+                        </a>
+                      </div>
+                      <a
+                        href={upiAppLink(showDirectAppModal === 'paytm' ? 'paytm' : 'any')}
+                        className="block text-[11px] font-bold text-green-700 underline"
+                      >
+                        {showDirectAppModal === 'paytm' ? 'Open Paytm' : 'Other UPI app'}
+                      </a>
+                    </div>
+                  )}
+
                   {upiQr && !upiQrExpired && !upiQrLoading && (
                     <div className="w-full py-3 bg-green-50 text-green-800 font-bold rounded-xl text-xs flex items-center justify-center gap-2">
                       <Loader2 className="w-4 h-4 animate-spin" />
@@ -1310,95 +1199,27 @@ export default function CheckoutPage() {
                       <span>Generate New QR</span>
                     </button>
                   )}
+
+                  {upiQrError && !upiQrLoading && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowDirectAppModal('none');
+                        selectPaymentTab('cod');
+                      }}
+                      className="w-full py-2.5 text-xs font-bold text-gray-700 hover:text-gray-950 underline cursor-pointer"
+                    >
+                      Pay by Cash on Delivery instead
+                    </button>
+                  )}
                 </div>
               </>
             )}
 
-            {/* Direct Card Authorization */}
-            {showDirectAppModal === 'card' && (
-              <div className="space-y-3 text-left">
-                <div>
-                  <label className="block text-[11px] font-bold text-gray-700 mb-1">Card Number</label>
-                  <input
-                    type="text"
-                    maxLength={19}
-                    value={cardNumber}
-                    onChange={(e) => setCardNumber(e.target.value)}
-                    className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-mono font-bold text-gray-900"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[11px] font-bold text-gray-700 mb-1">Expiry</label>
-                    <input
-                      type="text"
-                      maxLength={5}
-                      value={cardExpiry}
-                      onChange={(e) => setCardExpiry(e.target.value)}
-                      className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-900"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-bold text-gray-700 mb-1">CVV</label>
-                    <input
-                      type="password"
-                      maxLength={4}
-                      value={cardCvc}
-                      onChange={(e) => setCardCvc(e.target.value)}
-                      className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-900"
-                    />
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  disabled={isVerifyingPayment}
-                  onClick={() => finalizeOrder(`Credit Card (•••• ${cardNumber.slice(-4)})`, 'Paid')}
-                  className="w-full mt-2 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-2"
-                >
-                  {isVerifyingPayment ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                  <span>Authorize & Pay ₹{finalTotal}</span>
-                </button>
-              </div>
-            )}
-
-            {/* Direct NetBanking */}
-            {showDirectAppModal === 'netbanking' && (
-              <div className="space-y-3">
-                <div className="p-3 bg-blue-50 border border-blue-200 rounded-2xl text-xs text-blue-900 font-semibold">
-                  Connected to <strong>{selectedBank}</strong> Online Banking Rail.
-                </div>
-                <button
-                  type="button"
-                  disabled={isVerifyingPayment}
-                  onClick={() => finalizeOrder(`NetBanking (${selectedBank})`, 'Paid')}
-                  className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-2"
-                >
-                  {isVerifyingPayment ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                  <span>Confirm {selectedBank} Payment (₹{finalTotal})</span>
-                </button>
-              </div>
-            )}
-
-            {/* Direct Wallet */}
-            {showDirectAppModal === 'wallet' && (
-              <div className="space-y-3">
-                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-900 font-semibold">
-                  Pay directly via <strong>{selectedWallet}</strong> linked to +91 {customerPhone}.
-                </div>
-                <button
-                  type="button"
-                  disabled={isVerifyingPayment}
-                  onClick={() => finalizeOrder(`Wallet (${selectedWallet})`, 'Paid')}
-                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-2"
-                >
-                  {isVerifyingPayment ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                  <span>Confirm {selectedWallet} Payment (₹{finalTotal})</span>
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -1,56 +1,36 @@
 import { NextResponse } from 'next/server';
 import { getRazorpayInstance, getRazorpayKeyId, isRazorpayConfigured } from '@/lib/razorpay';
+import { OrderInputError, priceCart, readJson } from '@/lib/orders';
 
+// POST { items: [{ id, quantity }] } -> Razorpay order for the server-computed total.
 export async function POST(req: Request) {
   try {
-    const { amount, currency = 'INR', receipt = `rcpt_${Date.now()}` } = await req.json();
+    const body = await readJson(req);
+    const priced = await priceCart(body.items);
 
-    if (!amount || amount <= 0) {
-      return NextResponse.json({ error: 'Invalid order amount' }, { status: 400 });
+    if (!isRazorpayConfigured() || !process.env.RAZORPAY_KEY_SECRET) {
+      return NextResponse.json({ error: 'Online payments are not configured' }, { status: 503 });
     }
 
-    const amountInPaise = Math.round(amount * 100);
-    const keyId = getRazorpayKeyId();
+    const order = await getRazorpayInstance().orders.create({
+      amount: Math.round(priced.total * 100),
+      currency: 'INR',
+      receipt: `rcpt_${Date.now()}`,
+      notes: { merchant: 'MD FRESH Grocery' },
+    });
 
-    // 1. Attempt official live Razorpay order creation
-    if (isRazorpayConfigured()) {
-      try {
-        const razorpay = getRazorpayInstance();
-        const order = await razorpay.orders.create({
-          amount: amountInPaise,
-          currency: currency.toUpperCase(),
-          receipt: receipt.slice(0, 40),
-          notes: {
-            merchant: 'MD FRESH Grocery',
-            type: '10-Minute Instant Delivery',
-          },
-        });
-
-        return NextResponse.json({
-          success: true,
-          orderId: order.id,
-          amount: order.amount,
-          currency: order.currency,
-          keyId: keyId,
-          isOfficialRazorpayOrder: true,
-        });
-      } catch (razorpayErr: any) {
-        console.warn('Razorpay live order call note:', razorpayErr?.message || razorpayErr);
-      }
-    }
-
-    // 2. Fallback client-side / test order token
-    const testOrderId = `order_${Date.now()}_${Math.random().toString(36).substring(7)}`;
     return NextResponse.json({
       success: true,
-      orderId: testOrderId,
-      amount: amountInPaise,
-      currency: currency.toUpperCase(),
-      keyId: keyId,
-      isOfficialRazorpayOrder: false,
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      keyId: getRazorpayKeyId(),
     });
   } catch (error: any) {
-    console.error('Razorpay order creation error:', error);
-    return NextResponse.json({ error: error.message || 'Failed to create Razorpay order' }, { status: 500 });
+    if (error instanceof OrderInputError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    console.error('Razorpay order creation error:', error?.error?.description || error?.message || error);
+    return NextResponse.json({ error: 'Online payment is unavailable right now' }, { status: 502 });
   }
 }
