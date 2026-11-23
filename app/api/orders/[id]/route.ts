@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { isAdminRequest, readJson, OrderInputError } from '@/lib/orders';
+import { AWAITING_PAYMENT, PAID, PAYMENT_NOT_RECEIVED, PAYMENT_TO_VERIFY } from '@/lib/upiQr';
 
 const ORDER_STATUSES = ['received', 'approved', 'preparing', 'dispatched', 'delivered', 'cancelled'];
 
@@ -35,7 +36,8 @@ export async function GET(
 }
 
 // Shop-manager only: move an order through its delivery stages.
-// Payment status is not editable here; only Razorpay confirmation sets it.
+// payment_status can only go from a pending UPI state to "Paid" or "Payment not received"
+// (the shop checked its UPI app). Razorpay payments are confirmed automatically.
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -58,10 +60,37 @@ export async function PATCH(
     if (body.assigned_branch_name) updateData.assigned_branch_name = String(body.assigned_branch_name);
     if (body.branch_distance_km !== undefined) updateData.branch_distance_km = Number(body.branch_distance_km);
 
-    const { data: existing, error: findError } = await supabase.from('orders').select('id').eq('id', id);
+    const { data: existing, error: findError } = await supabase.from('orders').select('*').eq('id', id);
     if (findError) throw findError;
     if (!existing || existing.length === 0) {
       return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+    }
+    const current = existing[0];
+    const pendingUpi = [AWAITING_PAYMENT, PAYMENT_TO_VERIFY];
+
+    let nextPaymentStatus = current.payment_status;
+    if (body.payment_status !== undefined) {
+      if (![PAID, PAYMENT_NOT_RECEIVED].includes(body.payment_status)) {
+        return NextResponse.json({ error: 'Invalid payment status' }, { status: 400 });
+      }
+      if (!pendingUpi.includes(current.payment_status) && current.payment_status !== PAYMENT_NOT_RECEIVED) {
+        return NextResponse.json({ error: `Payment is already "${current.payment_status}"` }, { status: 409 });
+      }
+      nextPaymentStatus = body.payment_status;
+      updateData.payment_status = nextPaymentStatus;
+    }
+
+    // Do not pack or send an order whose UPI payment the shop has not seen.
+    const fulfilment = ['approved', 'preparing', 'dispatched', 'delivered'];
+    if (
+      updateData.status &&
+      fulfilment.includes(updateData.status as string) &&
+      (pendingUpi.includes(nextPaymentStatus) || nextPaymentStatus === PAYMENT_NOT_RECEIVED)
+    ) {
+      return NextResponse.json(
+        { error: 'Confirm the UPI payment (Mark as paid) before approving this order' },
+        { status: 409 }
+      );
     }
 
     const { error } = await supabase.from('orders').update(updateData).eq('id', id);

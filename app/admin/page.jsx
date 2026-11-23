@@ -186,11 +186,36 @@ export default function Admin() {
         headers: { 'Content-Type': 'application/json', ...adminHeaders() },
         body: JSON.stringify({ status: newStatus }),
       });
-      if (!res.ok) throw new Error('Failed to update order status');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to update order status');
+      }
       await fetchOrders();
     } catch (err) {
       console.error('Error updating order:', err);
       alert('Failed to update order: ' + err.message);
+    } finally {
+      setUpdatingOrderId(null);
+    }
+  };
+
+  // Direct UPI: shop checked its PhonePe / Google Pay app and confirms (or rejects) the payment.
+  const handleUpdatePayment = async (orderId, paymentStatus) => {
+    try {
+      setUpdatingOrderId(orderId);
+      const res = await fetch(`/api/orders/${orderId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+        body: JSON.stringify({ payment_status: paymentStatus }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to update payment');
+      }
+      await fetchOrders();
+    } catch (err) {
+      console.error('Error updating payment:', err);
+      alert('Failed to update payment: ' + err.message);
     } finally {
       setUpdatingOrderId(null);
     }
@@ -725,10 +750,43 @@ export default function Admin() {
 
                       {/* Right Amount */}
                       <div className="text-right">
-                        <div className="text-xl font-black text-gray-900">₹{ord.total_amount}</div>
-                        <span className={`text-[11px] font-bold ${ord.payment_status?.includes('Pending') ? 'text-amber-700' : 'text-green-700'}`}>
+                        <div className="text-xl font-black text-gray-900">₹{Number(ord.total_amount).toFixed(2)}</div>
+                        <span className={`text-[11px] font-bold ${
+                          ord.payment_status === 'Paid'
+                            ? 'text-green-700'
+                            : ord.payment_status === 'Payment not received'
+                            ? 'text-red-700'
+                            : 'text-amber-700'
+                        }`}>
                           {ord.payment_status}
                         </span>
+                        {['Awaiting Payment', 'Payment to verify', 'Payment not received'].includes(ord.payment_status) && (
+                          <div className="mt-2 flex flex-col items-end gap-1.5">
+                            <span className="text-[10px] text-gray-500 max-w-[14rem]">
+                              Check your UPI app for ₹{Number(ord.total_amount).toFixed(2)} (note: Order {ord.id})
+                            </span>
+                            <div className="flex gap-1.5">
+                              <button
+                                type="button"
+                                disabled={updatingOrderId === ord.id}
+                                onClick={() => handleUpdatePayment(ord.id, 'Paid')}
+                                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-[11px] font-black cursor-pointer disabled:opacity-50"
+                              >
+                                Mark as paid
+                              </button>
+                              {ord.payment_status !== 'Payment not received' && (
+                                <button
+                                  type="button"
+                                  disabled={updatingOrderId === ord.id}
+                                  onClick={() => handleUpdatePayment(ord.id, 'Payment not received')}
+                                  className="px-3 py-1.5 bg-white hover:bg-red-50 text-red-700 border border-red-200 rounded-lg text-[11px] font-black cursor-pointer disabled:opacity-50"
+                                >
+                                  Not received
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -805,12 +863,26 @@ export default function Admin() {
                         {isPending && (
                           <button
                             type="button"
-                            disabled={updatingOrderId === ord.id}
+                            disabled={
+                              updatingOrderId === ord.id ||
+                              ['Awaiting Payment', 'Payment to verify', 'Payment not received'].includes(ord.payment_status)
+                            }
+                            title={
+                              ['Awaiting Payment', 'Payment to verify', 'Payment not received'].includes(ord.payment_status)
+                                ? 'Confirm the UPI payment first'
+                                : undefined
+                            }
                             onClick={() => handleUpdateOrderStatus(ord.id, 'approved')}
                             className="px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-black shadow-md transition flex items-center gap-1.5 cursor-pointer active:scale-95 disabled:opacity-50"
                           >
                             <Check className="w-4 h-4" />
-                            <span>{updatingOrderId === ord.id ? 'Approving...' : 'Accept & Start Packing'}</span>
+                            <span>
+                              {updatingOrderId === ord.id
+                                ? 'Approving...'
+                                : ['Awaiting Payment', 'Payment to verify', 'Payment not received'].includes(ord.payment_status)
+                                ? 'Confirm payment first'
+                                : 'Accept & Start Packing'}
+                            </span>
                           </button>
                         )}
 

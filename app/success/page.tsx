@@ -388,7 +388,7 @@ function SuccessContent() {
                   Items Ordered ({Array.isArray(order.items) ? order.items.length : '1'})
                 </span>
                 <span className="text-xs font-black text-gray-900">
-                  Total: ₹{order.total_amount}
+                  Total: ₹{Number(order.total_amount).toFixed(2)}
                 </span>
               </div>
               
@@ -405,10 +405,26 @@ function SuccessContent() {
 
               <div className="mt-2 pt-2 border-t border-gray-200 text-[10px] text-gray-500 flex items-center justify-between font-semibold">
                 <span>Payment: <strong className="text-gray-800">{order.payment_method}</strong></span>
-                <span className="text-green-700 font-bold bg-green-100 px-2 py-0.5 rounded">
+                <span className={`font-bold px-2 py-0.5 rounded ${
+                  order.payment_status === 'Paid'
+                    ? 'text-green-700 bg-green-100'
+                    : order.payment_status === 'Payment not received'
+                    ? 'text-red-700 bg-red-100'
+                    : 'text-amber-800 bg-amber-100'
+                }`}>
                   {order.payment_status}
                 </span>
               </div>
+              {order.payment_status === 'Payment to verify' && (
+                <p className="mt-2 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                  The shop is confirming your UPI payment of ₹{Number(order.total_amount).toFixed(2)}. Your order is packed once it is confirmed.
+                </p>
+              )}
+              {order.payment_status === 'Payment not received' && (
+                <p className="mt-2 text-[11px] text-red-800 bg-red-50 border border-red-200 rounded-lg p-2">
+                  The shop could not find your payment. If money was debited, contact the shop with order ID {order.id}.
+                </p>
+              )}
             </div>
           )}
 

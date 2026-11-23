@@ -126,6 +126,8 @@ export default function CheckoutPage() {
   // Per-order dynamic Razorpay UPI QR (new QR for every order, confirmed server-side)
   const [upiQr, setUpiQr] = useState<{
     orderId: string;
+    mode: 'direct' | 'razorpay';
+    payee: string | null;
     imageUrl: string;
     upiIntent: string | null;
     amount: number;
@@ -135,6 +137,7 @@ export default function CheckoutPage() {
   const [upiQrError, setUpiQrError] = useState('');
   const [upiQrExpired, setUpiQrExpired] = useState(false);
   const [upiQrSecondsLeft, setUpiQrSecondsLeft] = useState(0);
+  const [isClaimingPaid, setIsClaimingPaid] = useState(false);
   // Unpaid order created for the UPI QR. Reused while the cart is unchanged, even when
   // QR creation failed, so retries never create duplicate orders.
   const [qrOrder, setQrOrder] = useState<{ cartKey: string; order: PlacedOrder } | null>(null);
@@ -382,6 +385,8 @@ export default function CheckoutPage() {
 
       setUpiQr({
         orderId: order.id,
+        mode: qrData.mode === 'direct' ? 'direct' : 'razorpay',
+        payee: qrData.payee || null,
         imageUrl: qrData.imageUrl,
         upiIntent: qrData.upiIntent || null,
         amount: qrData.amount,
@@ -396,6 +401,31 @@ export default function CheckoutPage() {
   };
 
   const isUpiModal = showDirectAppModal !== 'none';
+
+  // Direct UPI: customer taps "I've paid". The shop confirms the money in admin before
+  // the order is packed, so this never marks the order Paid by itself.
+  const claimUpiPaid = async () => {
+    if (!upiQr || !qrOrder) return;
+    setIsClaimingPaid(true);
+    setUpiQrError('');
+    try {
+      const res = await fetch('/api/payments/upi-qr', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: upiQr.orderId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) throw new Error(data.error || 'Could not update payment status');
+      const order = qrOrder.order;
+      setUpiQr(null);
+      setQrOrder(null);
+      completeOrderLocally({ ...order, payment_method: 'UPI (Direct)' });
+    } catch (err: any) {
+      setUpiQrError(err.message);
+    } finally {
+      setIsClaimingPaid(false);
+    }
+  };
 
   // Build an app-specific link from the QR's UPI intent. Android can also use plain upi://
   // (shows an app chooser); iOS needs the app's own scheme.
@@ -1115,7 +1145,7 @@ export default function CheckoutPage() {
             </div>
 
             <p className="text-xs text-gray-500 mb-3">
-              Pay <strong>₹{upiQr?.amount ?? qrOrder?.order.total_amount ?? finalTotal}</strong> directly to MD Fresh Grocery
+              Pay <strong>₹{(upiQr?.amount ?? qrOrder?.order.total_amount ?? finalTotal).toFixed(2)}</strong> directly to {upiQr?.payee || 'MD Fresh Grocery'}
             </p>
 
             {/* UPI QR & App Trigger */}
@@ -1142,6 +1172,11 @@ export default function CheckoutPage() {
                       <span className="text-xs font-bold text-red-600 px-2">{upiQrError}</span>
                     )}
                   </div>
+                  {upiQr?.payee && !upiQrExpired && !upiQrLoading && (
+                    <span className="text-[11px] font-bold text-gray-700 mt-1 block">
+                      Paying {upiQr.payee}
+                    </span>
+                  )}
                   {upiQr && !upiQrExpired && !upiQrLoading && (
                     <span className="text-[10px] font-black text-green-700 mt-1 block">
                       Order {upiQr.orderId} • expires in {Math.floor(upiQrSecondsLeft / 60)}:{String(upiQrSecondsLeft % 60).padStart(2, '0')}
@@ -1182,10 +1217,28 @@ export default function CheckoutPage() {
                     </div>
                   )}
 
-                  {upiQr && !upiQrExpired && !upiQrLoading && (
+                  {upiQr && upiQr.mode === 'razorpay' && !upiQrExpired && !upiQrLoading && (
                     <div className="w-full py-3 bg-green-50 text-green-800 font-bold rounded-xl text-xs flex items-center justify-center gap-2">
                       <Loader2 className="w-4 h-4 animate-spin" />
                       <span>Scan with any UPI app. Waiting for payment…</span>
+                    </div>
+                  )}
+
+                  {upiQr && upiQr.mode === 'direct' && !upiQrExpired && !upiQrLoading && (
+                    <div className="space-y-2">
+                      <p className="text-[11px] text-gray-600 leading-snug">
+                        Pay exactly <strong>₹{upiQr.amount.toFixed(2)}</strong>. The paise identify your order.
+                        After paying, tap the button below. The shop confirms your payment before packing.
+                      </p>
+                      <button
+                        type="button"
+                        disabled={isClaimingPaid}
+                        onClick={claimUpiPaid}
+                        className="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-black rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
+                      >
+                        {isClaimingPaid ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                        <span>I&apos;ve paid ₹{upiQr.amount.toFixed(2)}</span>
+                      </button>
                     </div>
                   )}
 

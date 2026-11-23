@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { findNearestBranch } from '@/lib/branches';
-import { AWAITING_PAYMENT, PAID } from '@/lib/upiQr';
+import { AWAITING_PAYMENT, PAID, uniqueUpiAmount, upiMode } from '@/lib/upiQr';
 import {
   COD_PENDING,
   OrderInputError,
@@ -47,6 +47,7 @@ export async function POST(req: Request) {
     const priced = await priceCart(body.items);
     const payment = String(body.payment || '');
 
+    let totalAmount = priced.total;
     let paymentMethod: string;
     let paymentStatus: string;
     let razorpayOrderId: string | null = null;
@@ -57,7 +58,12 @@ export async function POST(req: Request) {
       paymentMethod = 'Cash on Delivery';
       paymentStatus = COD_PENDING;
     } else if (payment === 'upi_qr') {
-      paymentMethod = 'UPI QR (Razorpay)';
+      if (upiMode() === 'direct') {
+        paymentMethod = 'UPI QR (Direct)';
+        totalAmount = await uniqueUpiAmount(priced.total);
+      } else {
+        paymentMethod = 'UPI QR (Razorpay)';
+      }
       paymentStatus = AWAITING_PAYMENT;
     } else if (payment === 'razorpay') {
       razorpayOrderId = String(body.razorpay_order_id || '');
@@ -127,7 +133,7 @@ export async function POST(req: Request) {
       subtotal: priced.subtotal,
       delivery_fee: priced.deliveryFee,
       handling_fee: priced.handlingFee,
-      total_amount: priced.total,
+      total_amount: totalAmount,
       payment_method: paymentMethod,
       payment_status: paymentStatus,
       stripe_payment_id: null,
@@ -151,7 +157,7 @@ export async function POST(req: Request) {
         subtotal: priced.subtotal,
         delivery_fee: priced.deliveryFee,
         handling_fee: priced.handlingFee,
-        total_amount: priced.total,
+        total_amount: totalAmount,
         payment_method: paymentMethod,
         payment_status: paymentStatus,
         delivery_address: deliveryAddress,

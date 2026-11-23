@@ -2,7 +2,58 @@ import { supabase } from '@/lib/supabase';
 import { getRazorpayInstance } from '@/lib/razorpay';
 
 export const AWAITING_PAYMENT = 'Awaiting Payment';
+// Customer says they paid; the shop still has to see the money and confirm.
+export const PAYMENT_TO_VERIFY = 'Payment to verify';
 export const PAID = 'Paid';
+export const PAYMENT_NOT_RECEIVED = 'Payment not received';
+
+// Direct UPI mode: payments go straight to the shop's own UPI ID (no gateway).
+// Each order still gets its own QR (own amount, own order reference). The shop confirms
+// payment in the admin page, because plain UPI does not notify the website.
+export function getShopUpi() {
+  const vpa = (process.env.SHOP_UPI_ID || '').trim();
+  if (!/^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/.test(vpa)) return null;
+  return {
+    vpa,
+    name: (process.env.SHOP_UPI_NAME || 'MD Fresh Store').trim().slice(0, 50),
+  };
+}
+
+export function upiMode(): 'direct' | 'razorpay' {
+  if (process.env.UPI_MODE === 'razorpay') return 'razorpay';
+  return getShopUpi() ? 'direct' : 'razorpay';
+}
+
+// Add 1-99 paise so each open UPI order has a different amount. The shop can then match
+// a payment to an order by amount alone, even when the payer's app drops the order note.
+// Set UPI_UNIQUE_PAISE=false to turn this off.
+export async function uniqueUpiAmount(baseTotal: number) {
+  if (process.env.UPI_UNIQUE_PAISE === 'false') return baseTotal;
+  const { data, error } = await supabase.from('orders').select('total_amount, payment_status');
+  if (error) throw error;
+  const openStatuses = [AWAITING_PAYMENT, PAYMENT_TO_VERIFY];
+  const taken = new Set(
+    (data || [])
+      .filter((o: { payment_status: string }) => openStatuses.includes(o.payment_status))
+      .map((o: { total_amount: number }) => Math.round(Number(o.total_amount) * 100))
+  );
+  const basePaise = Math.round(baseTotal * 100);
+  const free: number[] = [];
+  for (let p = 1; p <= 99; p++) if (!taken.has(basePaise + p)) free.push(p);
+  if (free.length === 0) return baseTotal;
+  const pick = free[Math.floor(Math.random() * free.length)];
+  return (basePaise + pick) / 100;
+}
+
+export function buildUpiIntent(vpa: string, name: string, amount: number, orderId: string) {
+  // The UPI ID is already validated (letters, digits, . - _ and one @), so it is used as is:
+  // some UPI apps do not decode %40 back to @. Other values are percent-encoded (%20 for spaces).
+  const enc = encodeURIComponent;
+  return (
+    `upi://pay?pa=${vpa}&pn=${enc(name)}&am=${amount.toFixed(2)}&cu=INR` +
+    `&tr=${enc(orderId)}&tn=${enc(`Order ${orderId}`)}`
+  );
+}
 
 // QR codes expire after this many seconds. Razorpay requires at least 2 minutes.
 export const QR_TTL_SECONDS = 15 * 60;
