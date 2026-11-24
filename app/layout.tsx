@@ -3,6 +3,7 @@ import "./globals.css";
 import ClientModals from "@/components/ClientModals";
 import ExtensionErrorSuppressor from "@/components/ExtensionErrorSuppressor";
 import MotionProvider from "@/components/MotionProvider";
+import SplashScreen from "@/components/SplashScreen";
 
 export const metadata: Metadata = {
   title: "MD FRESH - Fresh Fruits & Vegetables",
@@ -17,6 +18,13 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full antialiased" suppressHydrationWarning>
       <head>
+        <link rel="preload" href="/images/logo-splash.webp" as="image" fetchPriority="high" />
+        {/* Play the splash once per session: a repeat load is marked "seen" before first paint. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{var k='md-splash';document.documentElement.dataset.splash=sessionStorage.getItem(k)?'seen':'playing';sessionStorage.setItem(k,'1')}catch(e){document.documentElement.dataset.splash='playing'}`,
+          }}
+        />
         <script
           dangerouslySetInnerHTML={{
             __html: `
@@ -129,6 +137,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col bg-gray-50 font-sans" suppressHydrationWarning>
         <ExtensionErrorSuppressor />
         <MotionProvider>
+          <SplashScreen />
           <ClientModals />
           {children}
         </MotionProvider>

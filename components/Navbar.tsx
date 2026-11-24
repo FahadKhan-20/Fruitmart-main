@@ -65,6 +65,7 @@ export default function Navbar() {
               <Image 
                 src="/images/logo.png" 
                 alt="MD FRESH Logo" 
+                data-brand-logo
                 width={56} 
                 height={56} 
                 className="object-contain" 
